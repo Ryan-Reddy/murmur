@@ -1,0 +1,7 @@
+kokoro-onnx
+soundfile
+sounddevice
+pyperclip
+keyboard
+pystray
+pillow
