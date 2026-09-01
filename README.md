@@ -11,12 +11,14 @@ Tweak the `BLEND` constant in `murmur.py` to taste.
 
 | Keys | Action |
 |---|---|
-| `Ctrl+Alt+Y` | Read the current selection (press again to read a new one) |
-| `Ctrl+Alt+S` | Stop (or click the on-screen pill) |
+| `Ctrl+Alt+M` | Read the current selection (press again to read a new one) |
+| `Ctrl+Alt+Space` | Pause / resume (or click the pill) |
+| `Ctrl+Alt+S` | Stop (or click the pill's ✕) |
 | `Ctrl+Alt+Up` / `Down` | Faster / slower |
 
 While reading, a small pill at the bottom of the screen shows the sentence
-being spoken — click it to stop. The tray icon turns green while speaking.
+being spoken — click it to pause/resume, or its ✕ to stop. The tray icon is
+green while speaking, amber while paused.
 
 ## Run
 

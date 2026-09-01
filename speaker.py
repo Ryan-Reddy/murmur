@@ -9,11 +9,13 @@ Usage:
 Optional callbacks (called from a worker thread):
     on_state(speaking: bool)   fires when speech starts and ends
     on_sentence(text: str)     fires as each sentence begins playing
+    on_pause(paused: bool)     fires on pause / resume
 """
 
 import queue
 import re
 import threading
+import time
 
 import sounddevice as sd
 from kokoro_onnx import Kokoro
@@ -47,13 +49,16 @@ class Speaker:
         speed: float = 1.0,
         on_state=None,
         on_sentence=None,
+        on_pause=None,
     ):
         self.kokoro = Kokoro(str(model_path), str(voices_path))
         self.voice = self.blend_voice(blend)
         self.speed = speed
         self._on_state = on_state or (lambda speaking: None)
         self._on_sentence = on_sentence or (lambda text: None)
+        self._on_pause = on_pause or (lambda paused: None)
         self._stop = threading.Event()
+        self._paused = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
 
@@ -62,7 +67,23 @@ class Speaker:
 
     def stop(self):
         self._stop.set()
-        sd.stop()
+        self._paused.clear()
+
+    def pause(self):
+        if not self._paused.is_set():
+            self._paused.set()
+            self._on_pause(True)
+
+    def resume(self):
+        if self._paused.is_set():
+            self._paused.clear()
+            self._on_pause(False)
+
+    def toggle_pause(self):
+        if self._paused.is_set():
+            self.resume()
+        else:
+            self.pause()
 
     def speak(self, text: str):
         """Start reading text aloud; interrupts any reading in progress."""
@@ -97,10 +118,26 @@ class Speaker:
                 if stop.is_set():
                     break
                 self._on_sentence(sentence)
-                sd.play(audio, sample_rate)
-                sd.wait()
+                self._play(audio, sample_rate, stop)
         finally:
             self._on_state(False)
+
+    def _play(self, audio, sample_rate, stop):
+        """Chunked playback so pause and stop can interrupt mid-sentence."""
+        data = audio.reshape(-1, 1).astype("float32", copy=False)
+        block = 2048
+        with sd.OutputStream(samplerate=sample_rate, channels=1, dtype="float32") as stream:
+            i = 0
+            while i < len(data) and not stop.is_set():
+                if self._paused.is_set():
+                    stream.stop()
+                    while self._paused.is_set() and not stop.is_set():
+                        time.sleep(0.05)
+                    if stop.is_set():
+                        break
+                    stream.start()
+                stream.write(data[i : i + block])
+                i += block
 
     def _produce(self, sentences, q, stop):
         for sentence in sentences:

@@ -1,8 +1,9 @@
 """Murmur — reads your selection aloud, anywhere on Windows, fully offline.
 
 Select text in any app, then:
-  Ctrl+Alt+Y     read it (press again on a new selection to switch to it)
-  Ctrl+Alt+S     stop (or click the on-screen pill)
+  Ctrl+Alt+M     read it (press again on a new selection to switch to it)
+  Ctrl+Alt+Space pause / resume (or click the pill)
+  Ctrl+Alt+S     stop (or click the pill's ✕)
   Ctrl+Alt+Up    faster
   Ctrl+Alt+Down  slower
 
@@ -25,7 +26,8 @@ from speaker import Speaker
 
 # ------------------------------------------------------------------ config
 
-HOTKEY_READ = "ctrl+alt+y"  # avoid alt+r combos: NVIDIA overlay listens there
+HOTKEY_READ = "ctrl+alt+m"  # M for Murmur (avoid alt+r combos: NVIDIA overlay)
+HOTKEY_PAUSE = "ctrl+alt+space"
 HOTKEY_STOP = "ctrl+alt+s"
 HOTKEY_FASTER = "ctrl+alt+up"
 HOTKEY_SLOWER = "ctrl+alt+down"
@@ -92,6 +94,7 @@ def make_icon_image(color) -> Image.Image:
 
 IMG_IDLE = make_icon_image((124, 92, 255, 255))     # purple
 IMG_SPEAKING = make_icon_image((52, 199, 123, 255))  # green
+IMG_PAUSED = make_icon_image((255, 170, 60, 255))    # amber
 
 # ------------------------------------------------------------------ app
 
@@ -108,6 +111,7 @@ def main():
         blend=BLEND,
         on_state=lambda speaking: ui_events.put(("state", speaking)),
         on_sentence=lambda text: ui_events.put(("sentence", text)),
+        on_pause=lambda paused: ui_events.put(("pause", paused)),
     )
     print("Model loaded.")
 
@@ -132,24 +136,34 @@ def main():
         else:
             speaker.speak("I couldn't find any selected text.")
 
-    # --- overlay pill: shows the sentence being read, click to stop ---
+    # --- overlay pill: sentence being read; click = pause/resume, ✕ = stop ---
     root = tk.Tk()
     root.withdraw()
     root.overrideredirect(True)
     root.attributes("-topmost", True)
     root.attributes("-alpha", 0.93)
     root.configure(bg="#1e1b2e")
-    label = tk.Label(
+    body = tk.Label(
         root, text="", fg="#e8e4ff", bg="#1e1b2e",
-        font=("Segoe UI", 10), padx=16, pady=9, cursor="hand2",
+        font=("Segoe UI", 10), padx=14, pady=9, cursor="hand2",
     )
-    label.pack()
-    for widget in (root, label):
-        widget.bind("<Button-1>", lambda _e: speaker.stop())
+    body.pack(side="left")
+    close = tk.Label(
+        root, text="✕", fg="#8f87b8", bg="#1e1b2e",
+        font=("Segoe UI", 10, "bold"), padx=12, pady=9, cursor="hand2",
+    )
+    close.pack(side="left")
+    body.bind("<Button-1>", lambda _e: speaker.toggle_pause())
+    close.bind("<Button-1>", lambda _e: speaker.stop())
 
-    def show_pill(text: str):
-        snippet = text if len(text) <= 90 else text[:87] + "..."
-        label.config(text=f"\U0001f50a  {snippet}   ✕")
+    pill = {"sentence": "", "paused": False}
+
+    def render_pill():
+        snippet = pill["sentence"]
+        if len(snippet) > 90:
+            snippet = snippet[:87] + "..."
+        prefix = "⏸" if pill["paused"] else "\U0001f50a"
+        body.config(text=f"{prefix}  {snippet}")
         root.update_idletasks()
         x = (root.winfo_screenwidth() - root.winfo_reqwidth()) // 2
         y = root.winfo_screenheight() - 110
@@ -176,8 +190,10 @@ def main():
     )
     menu = pystray.Menu(
         pystray.MenuItem(f"Read selection: {HOTKEY_READ}", None, enabled=False),
-        pystray.MenuItem(f"Stop: {HOTKEY_STOP} or click the pill", None, enabled=False),
+        pystray.MenuItem(f"Pause: {HOTKEY_PAUSE} or click the pill", None, enabled=False),
+        pystray.MenuItem(f"Stop: {HOTKEY_STOP} or the pill's ✕", None, enabled=False),
         pystray.MenuItem("Speed", speed_menu),
+        pystray.MenuItem("Pause / resume", lambda icon, item: speaker.toggle_pause()),
         pystray.MenuItem("Stop reading", lambda icon, item: speaker.stop()),
         pystray.MenuItem("Quit", quit_app),
     )
@@ -193,14 +209,21 @@ def main():
                 if kind == "state":
                     icon.icon = IMG_SPEAKING if value else IMG_IDLE
                     if not value:
+                        pill["paused"] = False
                         root.withdraw()
                 elif kind == "sentence":
-                    show_pill(value)
+                    pill["sentence"] = value
+                    render_pill()
+                elif kind == "pause":
+                    pill["paused"] = value
+                    icon.icon = IMG_PAUSED if value else IMG_SPEAKING
+                    render_pill()
         except queue.Empty:
             pass
         root.after(80, poll_events)
 
     keyboard.add_hotkey(HOTKEY_READ, on_read)
+    keyboard.add_hotkey(HOTKEY_PAUSE, speaker.toggle_pause)
     keyboard.add_hotkey(HOTKEY_STOP, speaker.stop)
     keyboard.add_hotkey(HOTKEY_FASTER, lambda: change_speed(+1))
     keyboard.add_hotkey(HOTKEY_SLOWER, lambda: change_speed(-1))
