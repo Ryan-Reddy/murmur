@@ -9,7 +9,9 @@ Select text in any app, then:
 Runs as a tray icon (green while speaking). Quit from the tray menu.
 """
 
+import ctypes
 import queue
+import sys
 import time
 import tkinter as tk
 from pathlib import Path
@@ -33,7 +35,15 @@ BLEND = (("bf_emma", 0.7), ("af_nicole", 0.3))
 
 SPEEDS = [0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0]
 
-ROOT = Path(__file__).parent
+if getattr(sys, "frozen", False):
+    ROOT = Path(sys.executable).parent  # packaged: models/ sits next to Murmur.exe
+else:
+    ROOT = Path(__file__).parent
+
+
+def already_running() -> bool:
+    ctypes.windll.kernel32.CreateMutexW(None, False, "MurmurTTS-single-instance")
+    return ctypes.windll.kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
 
 # ------------------------------------------------------------------ selection
 
@@ -86,6 +96,9 @@ IMG_SPEAKING = make_icon_image((52, 199, 123, 255))  # green
 # ------------------------------------------------------------------ app
 
 def main():
+    if already_running():
+        print("Murmur is already running.")
+        return
     ui_events: queue.Queue = queue.Queue()
 
     print("Loading Kokoro model...")
