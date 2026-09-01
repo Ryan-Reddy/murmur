@@ -27,6 +27,22 @@ venv\Scripts\python.exe murmur.py
 Model files live in `models/` (`kokoro-v1.0.onnx` + `voices-v1.0.bin`, from the
 [kokoro-onnx releases](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0)).
 
+## Standalone build (no Python needed)
+
+```
+venv\Scripts\python.exe -m PyInstaller --noconfirm --noconsole --name Murmur --collect-all espeakng_loader --collect-all phonemizer --collect-all kokoro_onnx murmur.py
+Copy-Item -Recurse models dist\Murmur\models
+```
+
+Ship the `dist\Murmur` folder (or zip it). The recipient just unzips anywhere
+and runs `Murmur.exe` — no install, no Python, fully offline. A second launch
+is ignored (single-instance guard), and quitting is via the tray icon.
+
+## Autostart
+
+Put a shortcut to `Murmur.exe` (or `venv\Scripts\pythonw.exe murmur.py` for
+the dev copy) in `shell:startup`.
+
 ## Use in your own projects
 
 The engine lives in `speaker.py` with no UI dependencies — just
