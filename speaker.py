@@ -107,6 +107,14 @@ class Speaker:
         sentences = split_sentences(text)
         if not sentences:
             return
+        # PortAudio snapshots the device list at init; a monitor sleeping or an
+        # output re-plugging strands streams on a dead endpoint (silent, no
+        # error). Re-initializing here picks up the current default device.
+        try:
+            sd._terminate()
+            sd._initialize()
+        except Exception:
+            pass
         self._on_state(True)
         try:
             q: queue.Queue = queue.Queue(maxsize=3)
