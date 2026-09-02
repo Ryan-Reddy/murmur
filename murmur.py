@@ -4,6 +4,7 @@ Select text in any app, then:
   Ctrl+Alt+M     read it (press again on a new selection to switch to it)
   Ctrl+Alt+Space pause / resume (or click the pill)
   Ctrl+Alt+S     stop (or click the pill's ✕)
+  Ctrl+Alt+B     toggle select mode: every new selection is read at once
   Ctrl+Alt+Up    faster
   Ctrl+Alt+Down  slower
 
@@ -12,12 +13,15 @@ Runs as a tray icon (green while speaking). Quit from the tray menu.
 
 import ctypes
 import queue
+import socket
 import sys
+import threading
 import time
 import tkinter as tk
 from pathlib import Path
 
 import keyboard
+import mouse
 import pyperclip
 import pystray
 from PIL import Image, ImageDraw
@@ -29,6 +33,7 @@ from speaker import Speaker
 HOTKEY_READ = "ctrl+alt+m"  # M for Murmur (avoid alt+r combos: NVIDIA overlay)
 HOTKEY_PAUSE = "ctrl+alt+space"
 HOTKEY_STOP = "ctrl+alt+s"
+HOTKEY_SELECTMODE = "ctrl+alt+b"  # B for browse: read every new selection
 HOTKEY_FASTER = "ctrl+alt+up"
 HOTKEY_SLOWER = "ctrl+alt+down"
 
@@ -36,6 +41,10 @@ HOTKEY_SLOWER = "ctrl+alt+down"
 BLEND = (("bf_emma", 0.7), ("af_nicole", 0.3))
 
 SPEEDS = [0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0]
+
+# Localhost text-in port: other local apps (e.g. ryans-assistant) send UTF-8
+# text here and it plays through the same pill + hotkey controls.
+MURMUR_PORT = 52719
 
 if getattr(sys, "frozen", False):
     ROOT = Path(sys.executable).parent  # packaged: models/ sits next to Murmur.exe
@@ -81,6 +90,36 @@ def grab_selection() -> str:
             pass
     return text.strip()
 
+# ------------------------------------------------------------------ text-in
+
+def start_text_server(speaker):
+    def serve():
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            srv.bind(("127.0.0.1", MURMUR_PORT))
+        except OSError:
+            print(f"Port {MURMUR_PORT} taken; text-in disabled.")
+            return
+        srv.listen(2)
+        while True:
+            conn, _ = srv.accept()
+            with conn:
+                chunks, total = [], 0
+                while total < 200_000:
+                    data = conn.recv(65536)
+                    if not data:
+                        break
+                    chunks.append(data)
+                    total += len(data)
+                text = b"".join(chunks).decode("utf-8", "replace").strip()
+                if text == "::stop":
+                    speaker.stop()
+                elif text:
+                    speaker.speak(text)
+
+    threading.Thread(target=serve, daemon=True).start()
+
 # ------------------------------------------------------------------ tray icons
 
 def make_icon_image(color) -> Image.Image:
@@ -114,6 +153,7 @@ def main():
         on_pause=lambda paused: ui_events.put(("pause", paused)),
     )
     print("Model loaded.")
+    start_text_server(speaker)
 
     speed_index = SPEEDS.index(1.0)
 
@@ -137,6 +177,41 @@ def main():
             speaker.speak(text)
         else:
             speaker.speak("I couldn't find any selected text.")
+
+    # --- select mode: any completed selection (drag / double-click) is read ---
+    select_mode = {"on": False}
+    last_spoken = {"text": None}
+    drag_start = {"pos": (0, 0)}
+
+    def toggle_select_mode():
+        select_mode["on"] = not select_mode["on"]
+        ui_events.put(("selectmode", select_mode["on"]))
+
+    def read_selection_quietly():
+        def go():
+            time.sleep(0.15)  # let the app finalize the selection
+            text = grab_selection()
+            if text and text != last_spoken["text"]:
+                last_spoken["text"] = text
+                speaker.speak(text)
+        threading.Thread(target=go, daemon=True).start()
+
+    def on_mouse(event):
+        if not select_mode["on"] or not isinstance(event, mouse.ButtonEvent):
+            return
+        if event.button != "left":
+            return
+        if event.event_type == "down":
+            drag_start["pos"] = mouse.get_position()
+        elif event.event_type == "up":
+            x, y = mouse.get_position()
+            sx, sy = drag_start["pos"]
+            if abs(x - sx) + abs(y - sy) > 25:  # real drag, not a click
+                read_selection_quietly()
+        elif event.event_type == "double":
+            read_selection_quietly()
+
+    mouse.hook(on_mouse)
 
     # --- overlay pill: sentence being read; click = pause/resume, ✕ = stop ---
     root = tk.Tk()
@@ -221,6 +296,11 @@ def main():
         pystray.MenuItem(f"Pause: {HOTKEY_PAUSE} or click the pill", None, enabled=False),
         pystray.MenuItem(f"Stop: {HOTKEY_STOP} or the pill's ✕", None, enabled=False),
         pystray.MenuItem("Speed", speed_menu),
+        pystray.MenuItem(
+            f"Select mode ({HOTKEY_SELECTMODE}): read on select",
+            lambda icon, item: toggle_select_mode(),
+            checked=lambda item: select_mode["on"],
+        ),
         pystray.MenuItem("Pause / resume", lambda icon, item: speaker.toggle_pause()),
         pystray.MenuItem("Stop reading", lambda icon, item: speaker.stop()),
         pystray.MenuItem("Quit", quit_app),
@@ -239,6 +319,7 @@ def main():
                     icon.icon = IMG_SPEAKING if value else IMG_IDLE
                     if not value:
                         pill["paused"] = False
+                        last_spoken["text"] = None  # allow re-reading later
                         root.withdraw()
                 elif kind == "sentence":
                     pill["sentence"] = value
@@ -254,6 +335,12 @@ def main():
                         render_pill()
                     else:
                         flash(f"⚡  Speed {value}×")
+                elif kind == "selectmode":
+                    flash(
+                        "🖱  Select mode on — new selections are read aloud"
+                        if value
+                        else "🖱  Select mode off"
+                    )
         except queue.Empty:
             pass
         root.after(80, poll_events)
@@ -261,6 +348,7 @@ def main():
     keyboard.add_hotkey(HOTKEY_READ, on_read)
     keyboard.add_hotkey(HOTKEY_PAUSE, speaker.toggle_pause)
     keyboard.add_hotkey(HOTKEY_STOP, speaker.stop)
+    keyboard.add_hotkey(HOTKEY_SELECTMODE, toggle_select_mode)
     keyboard.add_hotkey(HOTKEY_FASTER, lambda: change_speed(+1))
     keyboard.add_hotkey(HOTKEY_SLOWER, lambda: change_speed(-1))
 

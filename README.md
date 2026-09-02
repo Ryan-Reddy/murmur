@@ -14,7 +14,11 @@ Tweak the `BLEND` constant in `murmur.py` to taste.
 | `Ctrl+Alt+M` | Read the current selection (press again to read a new one) |
 | `Ctrl+Alt+Space` | Pause / resume (or click the pill) |
 | `Ctrl+Alt+S` | Stop (or click the pill's ✕) |
+| `Ctrl+Alt+B` | Select mode: every new selection (drag / double-click) is read at once |
 | `Ctrl+Alt+Up` / `Down` | Faster / slower |
+
+Select mode (also in the tray menu) is great for quick browsing; keep it off
+in terminals, where the copy it triggers (Ctrl+C) can mean "interrupt".
 
 While reading, a small pill at the bottom of the screen shows the sentence
 being spoken — click it to pause/resume, or its ✕ to stop. The tray icon is
@@ -28,6 +32,20 @@ venv\Scripts\python.exe murmur.py
 
 Model files live in `models/` (`kokoro-v1.0.onnx` + `voices-v1.0.bin`, from the
 [kokoro-onnx releases](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0)).
+
+## Text-in port (voice service for other apps)
+
+While running, Murmur listens on `127.0.0.1:52719`. Any local app can send
+UTF-8 text (close the connection to finish) and it plays with the full pill +
+pause/stop controls — this is how
+[ryans-assistant](https://github.com/Ryan-Reddy/ryans-assistant) speaks.
+Sending the literal text `::stop` stops playback.
+
+```python
+import socket
+with socket.create_connection(("127.0.0.1", 52719)) as c:
+    c.sendall("Hello from another project.".encode("utf-8"))
+```
 
 ## Standalone build (no Python needed)
 
