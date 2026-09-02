@@ -121,12 +121,14 @@ def main():
         nonlocal speed_index
         speed_index = max(0, min(len(SPEEDS) - 1, speed_index + step))
         speaker.speed = SPEEDS[speed_index]
+        ui_events.put(("speed", SPEEDS[speed_index]))
 
     def set_speed(index: int):
         def handler(_icon, _item):
             nonlocal speed_index
             speed_index = index
             speaker.speed = SPEEDS[index]
+            ui_events.put(("speed", SPEEDS[index]))
         return handler
 
     def on_read():
@@ -148,6 +150,11 @@ def main():
         font=("Segoe UI", 10), padx=14, pady=9, cursor="hand2",
     )
     body.pack(side="left")
+    speed_hud = tk.Label(
+        root, text="1.0×", fg="#8f87b8", bg="#1e1b2e",
+        font=("Segoe UI", 9), padx=0, pady=9,
+    )
+    speed_hud.pack(side="left")
     close = tk.Label(
         root, text="✕", fg="#8f87b8", bg="#1e1b2e",
         font=("Segoe UI", 10, "bold"), padx=12, pady=9, cursor="hand2",
@@ -156,7 +163,7 @@ def main():
     body.bind("<Button-1>", lambda _e: speaker.toggle_pause())
     close.bind("<Button-1>", lambda _e: speaker.stop())
 
-    pill = {"sentence": "", "paused": False}
+    pill = {"sentence": "", "paused": False, "speaking": False}
 
     def render_pill():
         snippet = pill["sentence"]
@@ -164,11 +171,32 @@ def main():
             snippet = snippet[:87] + "..."
         prefix = "⏸" if pill["paused"] else "\U0001f50a"
         body.config(text=f"{prefix}  {snippet}")
+        place_pill()
+
+    def place_pill():
         root.update_idletasks()
         x = (root.winfo_screenwidth() - root.winfo_reqwidth()) // 2
         y = root.winfo_screenheight() - 110
         root.geometry(f"+{x}+{y}")
         root.deiconify()
+
+    flash_timer = {"id": None}
+
+    def flash(message: str):
+        # Transient toast for setting changes while nothing is being read.
+        if flash_timer["id"] is not None:
+            root.after_cancel(flash_timer["id"])
+        body.config(text=message)
+        place_pill()
+
+        def done():
+            flash_timer["id"] = None
+            if pill["speaking"]:
+                render_pill()
+            else:
+                root.withdraw()
+
+        flash_timer["id"] = root.after(1400, done)
 
     # --- tray ---
     def quit_app(icon, _item):
@@ -207,6 +235,7 @@ def main():
             while True:
                 kind, value = ui_events.get_nowait()
                 if kind == "state":
+                    pill["speaking"] = value
                     icon.icon = IMG_SPEAKING if value else IMG_IDLE
                     if not value:
                         pill["paused"] = False
@@ -216,8 +245,15 @@ def main():
                     render_pill()
                 elif kind == "pause":
                     pill["paused"] = value
-                    icon.icon = IMG_PAUSED if value else IMG_SPEAKING
-                    render_pill()
+                    if pill["speaking"]:
+                        icon.icon = IMG_PAUSED if value else IMG_SPEAKING
+                        render_pill()
+                elif kind == "speed":
+                    speed_hud.config(text=f"{value}×")
+                    if pill["speaking"]:
+                        render_pill()
+                    else:
+                        flash(f"⚡  Speed {value}×")
         except queue.Empty:
             pass
         root.after(80, poll_events)
