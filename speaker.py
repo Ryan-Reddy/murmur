@@ -85,6 +85,12 @@ class Speaker:
         else:
             self.pause()
 
+    def wait(self):
+        """Block until the current speech finishes (for one-shot scripts)."""
+        thread = self._thread
+        if thread is not None:
+            thread.join()
+
     def speak(self, text: str):
         """Start reading text aloud; interrupts any reading in progress."""
         with self._lock:
