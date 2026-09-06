@@ -9,6 +9,7 @@ Usage:
 Optional callbacks (called from a worker thread):
     on_state(speaking: bool)   fires when speech starts and ends
     on_sentence(text: str)     fires as each sentence begins playing
+    on_word(index: int)        fires as each word of that sentence begins
     on_pause(paused: bool)     fires on pause / resume
 """
 
@@ -18,6 +19,7 @@ import re
 import threading
 import time
 
+import numpy as np
 import onnxruntime as rt
 import sounddevice as sd
 from kokoro_onnx import Kokoro
@@ -71,9 +73,11 @@ class Speaker:
         voices_path,
         blend=DEFAULT_BLEND,
         speed: float = 1.0,
+        volume: float = 1.0,
         threads: int = 0,
         on_state=None,
         on_sentence=None,
+        on_word=None,
         on_pause=None,
     ):
         threads = threads or int(os.environ.get("MURMUR_THREADS", DEFAULT_THREADS))
@@ -83,8 +87,10 @@ class Speaker:
         )
         self.voice = self.blend_voice(blend)
         self.speed = speed
+        self.volume = volume
         self._on_state = on_state or (lambda speaking: None)
         self._on_sentence = on_sentence or (lambda text: None)
+        self._on_word = on_word or (lambda index: None)
         self._on_pause = on_pause or (lambda paused: None)
         self._stop = threading.Event()
         self._paused = threading.Event()
@@ -93,6 +99,35 @@ class Speaker:
 
     def blend_voice(self, blend):
         return sum(self.kokoro.get_voice_style(name) * weight for name, weight in blend)
+
+    def word_spans(self, sentence: str, samples: int) -> list[tuple[int, int]]:
+        """Where each word of a sentence falls in the rendered audio.
+
+        The v1.0 export returns audio and nothing else -- no per-token
+        durations -- so the sentence's known length is divided between its
+        words in proportion to how many phonemes each one takes. Phonemizing a
+        word costs about 0.05 ms, and the per-word counts add up exactly to the
+        phonemization of the whole sentence (the difference is one space per
+        gap), so the split follows what the model will actually say rather than
+        how the words happen to be spelled.
+        """
+        words = sentence.split()
+        if not words:
+            return []
+        weights = []
+        for word in words:
+            try:
+                weight = len(self.kokoro.tokenizer.phonemize(word))
+            except Exception:
+                weight = len(word)  # spelling is a decent fallback
+            weights.append(max(weight, 1) + 1)  # + the space that follows it
+        total = sum(weights)
+        spans, at = [], 0.0
+        for weight in weights:
+            end = at + weight / total * samples
+            spans.append((int(at), int(end)))
+            at = end
+        return spans
 
     def stop(self):
         self._stop.set()
@@ -157,18 +192,19 @@ class Speaker:
                     continue
                 if item is None:
                     break
-                sentence, audio, sample_rate = item
+                sentence, audio, sample_rate, spans = item
                 if stop.is_set():
                     break
                 self._on_sentence(sentence)
-                self._play(audio, sample_rate, stop)
+                self._play(audio, sample_rate, spans, stop)
         finally:
             self._on_state(False)
 
-    def _play(self, audio, sample_rate, stop):
+    def _play(self, audio, sample_rate, spans, stop):
         """Chunked playback so pause and stop can interrupt mid-sentence."""
         data = audio.reshape(-1, 1).astype("float32", copy=False)
-        block = 2048
+        block = 2048  # 85 ms at 24 kHz: fine enough to follow words
+        word, gain = -1, self._gain()
         with sd.OutputStream(samplerate=sample_rate, channels=1, dtype="float32") as stream:
             i = 0
             while i < len(data) and not stop.is_set():
@@ -179,8 +215,28 @@ class Speaker:
                     if stop.is_set():
                         break
                     stream.start()
-                stream.write(data[i : i + block])
+                while word + 1 < len(spans) and i >= spans[word + 1][0]:
+                    word += 1
+                    self._on_word(word)
+                chunk = data[i : i + block]
+                target = self._gain()
+                if target != gain:
+                    # Step to the new volume across the block instead of at its
+                    # edge, or the jump in amplitude is audible as a click.
+                    ramp = np.linspace(gain, target, len(chunk), dtype="float32")
+                    chunk = chunk * ramp.reshape(-1, 1)
+                    gain = target
+                elif gain != 1.0:
+                    chunk = chunk * gain
+                stream.write(chunk)
                 i += block
+
+    def _gain(self) -> float:
+        """Loudness is perceived roughly logarithmically, so a linear slider
+        sounds like it does nothing until the very bottom; squaring it makes the
+        control feel even. Never above 1.0 -- the model already peaks near full
+        scale and anything more clips."""
+        return float(min(max(self.volume, 0.0), 1.0)) ** 2
 
     def _produce(self, sentences, q, stop):
         for sentence in sentences:
@@ -193,9 +249,10 @@ class Speaker:
             except Exception as exc:
                 print(f"Skipping unspeakable chunk: {exc}")
                 continue
+            spans = self.word_spans(sentence, len(audio))
             while not stop.is_set():
                 try:
-                    q.put((sentence, audio, sample_rate), timeout=0.2)
+                    q.put((sentence, audio, sample_rate, spans), timeout=0.2)
                     break
                 except queue.Full:
                     pass

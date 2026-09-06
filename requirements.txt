@@ -5,4 +5,3 @@ pyperclip
 keyboard
 pystray
 pillow
-mouse
