@@ -130,10 +130,24 @@ four seconds warm, longer on the very first run when it comes off the disk
 cold), so the app never looks like it failed to start. A second launch is
 ignored (single-instance guard), and quitting is via the tray icon.
 
-The exe is unsigned, so the first run gets "Windows protected your PC" —
-**More info → Run anyway**. Cloning the repo and using `Install.cmd` instead
-avoids that warning entirely, since files from a `git clone` carry no
-mark-of-the-web.
+### The SmartScreen warning, and how to not get it
+
+The exe is unsigned, so a *downloaded* zip triggers "Windows protected your PC".
+The warning comes from the mark-of-the-web that browsers attach to downloads,
+and Windows copies that mark onto every file unzipped out of a marked archive.
+Remove it from the zip and nothing inside it is ever marked:
+
+> **right-click the zip → Properties → tick Unblock → Apply, then extract**
+
+Tell whoever you send it to do that *before* extracting — afterwards is too
+late, the mark is already on the files. Two other routes never pick up a mark
+at all: copying the zip from a USB stick, or cloning the repo and running
+`Install.cmd`.
+
+A code signing certificate would **not** help here. Since 2024 an EV
+certificate no longer grants instant SmartScreen reputation — OV, EV and Azure
+Artifact Signing all have to earn it from download volume, which an app sent to
+one person will never accumulate. It would cost money and still warn.
 
 `make_assets.py` draws `assets\murmur.ico` and `assets\splash.png` from the
 same shape as the tray icon; run it after changing the look.
