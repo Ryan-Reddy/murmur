@@ -128,12 +128,35 @@ def start_text_server(speaker, control):
 # ------------------------------------------------------------------ tray icons
 
 def make_icon_image(color) -> Image.Image:
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    # Drawn at 4x and downsampled: PIL does not antialias, and a 64 px circle
+    # drawn directly has visibly stepped edges in the tray.
+    scale, size = 4, 64
+    big = size * scale
+    img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    d.ellipse([2, 2, 62, 62], fill=color)
+    d.ellipse([2 * scale, 2 * scale, 62 * scale, 62 * scale], fill=color)
     for x, h in ((20, 10), (30, 20), (40, 14)):
-        d.rounded_rectangle([x, 32 - h, x + 6, 32 + h], radius=3, fill="white")
-    return img
+        d.rounded_rectangle(
+            [x * scale, (32 - h) * scale, (x + 6) * scale, (32 + h) * scale],
+            radius=3 * scale, fill="white",
+        )
+    return img.resize((size, size), Image.LANCZOS)
+
+
+def close_splash(text: str | None = None):
+    """The packaged build puts a splash up while the model loads; plain Python
+    runs have no pyi_splash module and skip this entirely."""
+    try:
+        import pyi_splash
+    except ImportError:
+        return
+    try:
+        if text:
+            pyi_splash.update_text(text)
+        else:
+            pyi_splash.close()
+    except Exception:
+        pass
 
 
 IMG_IDLE = make_icon_image((124, 92, 255, 255))     # purple
@@ -149,6 +172,7 @@ def main():
     ui_events: queue.Queue = queue.Queue()
 
     print("Loading Kokoro model...")
+    close_splash("loading the voice model…")
     speaker = Speaker(
         ROOT / "models" / "kokoro-v1.0.onnx",
         ROOT / "models" / "voices-v1.0.bin",
@@ -159,6 +183,7 @@ def main():
         on_pause=lambda paused: ui_events.put(("pause", paused)),
     )
     print("Model loaded.")
+    close_splash()
 
     speed_index = SPEEDS.index(1.0)
 

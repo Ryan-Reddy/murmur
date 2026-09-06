@@ -116,13 +116,27 @@ so another app — or a test — can drive Murmur without touching the keyboard:
 ## Standalone build (no Python needed)
 
 ```
-venv\Scripts\python.exe -m PyInstaller --noconfirm --noconsole --name Murmur --collect-all espeakng_loader --collect-all phonemizer --collect-all kokoro_onnx murmur.py
-Copy-Item -Recurse models dist\Murmur\models
+venv\Scripts\python.exe -m pip install pyinstaller
+.uild.ps1
 ```
 
-Ship the `dist\Murmur` folder (or zip it). The recipient just unzips anywhere
-and runs `Murmur.exe` — no install, no Python, fully offline. A second launch
-is ignored (single-instance guard), and quitting is via the tray icon.
+That regenerates the icon and splash, runs PyInstaller with them plus the
+Windows version resource, copies `models\` next to the exe and zips the lot
+into `dist\Murmur-win64.zip` (365 MB). `-NoZip` stops before the slow part.
+
+The recipient unzips anywhere and runs `Murmur.exe` — no install, no Python,
+no network. A splash appears immediately while the 310 MB model is read (about
+four seconds warm, longer on the very first run when it comes off the disk
+cold), so the app never looks like it failed to start. A second launch is
+ignored (single-instance guard), and quitting is via the tray icon.
+
+The exe is unsigned, so the first run gets "Windows protected your PC" —
+**More info → Run anyway**. Cloning the repo and using `Install.cmd` instead
+avoids that warning entirely, since files from a `git clone` carry no
+mark-of-the-web.
+
+`make_assets.py` draws `assets\murmur.ico` and `assets\splash.png` from the
+same shape as the tray icon; run it after changing the look.
 
 ## Autostart
 
