@@ -99,9 +99,19 @@ Model files live in `models/` (`kokoro-v1.0.onnx` + `voices-v1.0.bin`).
 Idle Murmur costs nothing measurable; all the work happens while it is actually
 speaking. ONNX Runtime would by default give the model one thread per core and
 let those threads spin-wait between operators, which on a 32-thread desktop
-burned 4.5 CPU-seconds per second of speech. Murmur caps it at four
-non-spinning threads instead: about 1 CPU-second per second of speech, still
-roughly twice as fast as playback, and around half the memory.
+burned 4.5 CPU-seconds per second of speech. Murmur caps it at six non-spinning
+threads instead: about 1 CPU-second per second of speech, comfortably ahead of
+playback, and around half the memory.
+
+Six rather than four because four turned out to be the worse of the two on both
+axes at once under load — slower *and* dearer per second of audio, since the
+fixed per-run overhead gets spread across a longer run.
+
+Nothing is heard until the first chunk has finished rendering, so a long opening
+sentence used to mean seconds of silence — 6.6 of them for a 137-character one.
+The opening is now cut at commas into progressively larger pieces, each at most
+half again the size of the one before, which is as fast as synthesis can grow
+without falling behind playback. First word in 2.4 seconds instead of 6.6.
 
 Set `MURMUR_THREADS` to trade back the other way — higher starts the first
 sentence sooner without costing much more total CPU, lower is gentler on a

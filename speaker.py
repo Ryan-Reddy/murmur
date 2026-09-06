@@ -30,9 +30,12 @@ DEFAULT_BLEND = (("bf_emma", 0.7), ("af_nicole", 0.3))
 # between operators rather than sleep. On a many-core desktop that costs ~4.5
 # CPU-seconds per second of speech and pins every core, for no useful gain: the
 # model is small and synthesis only has to stay ahead of playback. Four
-# non-spinning threads still run at ~2x real time for about a fifth of the
-# energy. Override with MURMUR_THREADS if you want a different trade.
-DEFAULT_THREADS = 4
+# non-spinning threads still run well ahead of real time for a fraction of the
+# energy. Six rather than four: measured under load, four was the worse of the
+# two on both axes at once -- slower (RTF 0.86 against 0.67) *and* dearer per
+# second of audio (1.40 CPU-seconds against 1.24), because the fixed per-run
+# overhead gets spread over a longer run. Override with MURMUR_THREADS.
+DEFAULT_THREADS = 6
 
 
 def _session(model_path, threads: int) -> rt.InferenceSession:
@@ -49,6 +52,39 @@ def _session(model_path, threads: int) -> rt.InferenceSession:
     )
 
 
+# Nothing is heard until the first chunk has finished rendering, so a long
+# opening sentence is silence the whole time it takes to synthesize -- six and a
+# half seconds for a 137-character one, measured. The opening is therefore cut
+# into progressively larger pieces: the first is short enough to start almost
+# at once, and each next one stays small enough to land before the one playing
+# runs out. Each piece may be at most 1/RTF times the one before it -- about
+# 1.5x at six threads -- or synthesis falls behind and the speech gaps instead,
+# which sounds worse than the wait it was meant to remove.
+LEAD_IN_FIRST = 70      # characters to aim for in the opening piece
+LEAD_IN_GROWTH = 1.5    # each next piece may be this much bigger
+LEAD_IN_STEPS = 4       # after which the buffer has enough slack
+
+
+def _split_at(text: str, limit: int, allow_words: bool = False):
+    """Cut at the last clause break at or before `limit`, else None.
+
+    Punctuation only by default. A gap at a comma is heard as a pause; a gap
+    mid-clause is heard as a fault, so an awkward break is only worth it when
+    the alternative is waiting on a very long comma-less sentence.
+    """
+    if len(text) <= limit:
+        return None
+    for mark in (",", ";", ":"):
+        cut = text.rfind(mark, limit // 3, limit)
+        if cut != -1:
+            return text[: cut + 1].strip(), text[cut + 1 :].strip()
+    if allow_words:
+        cut = text.rfind(" ", limit // 3, limit)
+        if cut != -1:
+            return text[:cut].strip(), text[cut + 1 :].strip()
+    return None
+
+
 def split_sentences(text: str) -> list[str]:
     text = re.sub(r"\s+", " ", text).strip()
     parts = re.split(r"(?<=[.!?…])\s+", text)
@@ -63,6 +99,17 @@ def split_sentences(text: str) -> list[str]:
             part = part[cut + 1 :].strip()
         if part:
             out.append(part)
+
+    at, limit = 0, float(LEAD_IN_FIRST)
+    for _ in range(LEAD_IN_STEPS):
+        if at >= len(out):
+            break
+        piece = _split_at(out[at], int(limit), allow_words=len(out[at]) > 250)
+        if piece is None:
+            break
+        out[at : at + 1] = list(piece)
+        limit = max(len(out[at]), 20) * LEAD_IN_GROWTH
+        at += 1
     return out
 
 
