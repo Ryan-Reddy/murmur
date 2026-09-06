@@ -148,8 +148,13 @@ def main():
         print(f"  {threads:>2} threads  short RTF {row['short_rtf']:.2f}  "
               f"long RTF {row['long_rtf']:.2f}  {row['cpu_per_audio_second']:.2f} CPU-s/audio-s")
 
-    print("\nEnd to end (this one speaks aloud)...")
-    e2e = end_to_end()
+    if "--silent" in sys.argv:
+        print("\nSkipping the end-to-end section (--silent).")
+        e2e = None
+    else:
+        print("\nEnd to end -- THIS SPEAKS ALOUD, repeatedly. Ctrl+C now to skip.")
+        time.sleep(4)
+        e2e = end_to_end()
     if e2e:
         print(f"  first word {e2e['first_word_s']:.2f}s, gaps {e2e['gaps_s']:+.2f}s")
 
