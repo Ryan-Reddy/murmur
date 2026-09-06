@@ -42,9 +42,22 @@ system's mouse input path at all.
 
 ## Install
 
-Clone the repo and double-click **`Install.cmd`**. It finds (or installs) Python,
-builds the virtual environment, downloads the voice model, and offers to start
-Murmur with Windows.
+One line in PowerShell, nothing to download first:
+
+```powershell
+irm https://raw.githubusercontent.com/Ryan-Reddy/murmur/main/install.ps1 | iex
+```
+
+That fetches Murmur into `%USERPROFILE%\Murmur`, finds (or installs) Python,
+builds the virtual environment, downloads the voice model and sets up the
+shortcuts. It uses `git` when it is there and falls back to the source zip when
+it is not, so nothing has to be installed beforehand. To put it somewhere else:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Ryan-Reddy/murmur/main/install.ps1))) -InstallDir D:\Murmur
+```
+
+Or clone it yourself and double-click **`Install.cmd`**:
 
 ```
 git clone https://github.com/Ryan-Reddy/murmur
@@ -188,3 +201,24 @@ and `blend=` / `speed=` / `volume=` / `threads=` customize the rest.
 ## Voice auditions
 
 `audition.py` / `audition2.py` regenerate the voice comparison samples in `samples/`.
+
+## Licence
+
+Murmur is [GPL-3.0](LICENSE). It has to be: it speaks through
+[espeak-ng](https://github.com/espeak-ng/espeak-ng) and
+[phonemizer](https://github.com/bootphon/phonemizer), both GPL-3.0, and the
+packaged build ships espeak-ng's DLL inside the exe.
+
+| | |
+|---|---|
+| [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) — the voice | Apache-2.0 |
+| [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx) | MIT |
+| [espeak-ng](https://github.com/espeak-ng/espeak-ng) — phonemes | GPL-3.0 |
+| [phonemizer](https://github.com/bootphon/phonemizer) | GPL-3.0 |
+| [pystray](https://github.com/moses-palmer/pystray) — the tray icon | LGPL-3.0 |
+| [onnxruntime](https://onnxruntime.ai) · [keyboard](https://github.com/boppreh/keyboard) | MIT |
+| [soundfile](https://github.com/bastibe/python-soundfile) · [pyperclip](https://github.com/asweigart/pyperclip) · [numpy](https://numpy.org) | BSD |
+| [Pillow](https://python-pillow.org) | MIT-CMU |
+
+The model files are not redistributed here — the installer fetches them from the
+kokoro-onnx releases and checks them against a known SHA-256.

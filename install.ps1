@@ -19,15 +19,17 @@ param(
     # Never ask anything -- for scripted installs and for testing.
     [switch] $Unattended,
     # Set everything up but do not start Murmur at the end.
-    [switch] $NoLaunch
+    [switch] $NoLaunch,
+    # Where to put Murmur when this is run straight from the web.
+    [string] $InstallDir = (Join-Path $HOME 'Murmur')
 )
 
 $ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$modelDir = Join-Path $root 'models'
-$venv = Join-Path $root 'venv'
-$pythonw = Join-Path $venv 'Scripts\pythonw.exe'
+# Windows PowerShell still negotiates TLS 1.0 on some machines, which GitHub
+# refuses.
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
+$REPO = 'https://github.com/Ryan-Reddy/murmur'
 $RELEASE = 'https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0'
 $MODELS = @(
     @{ Name = 'kokoro-v1.0.onnx'; Bytes = 325532387
@@ -40,6 +42,53 @@ function Say  ($m) { Write-Host "  $m" }
 function Step ($m) { Write-Host "`n$m" -ForegroundColor Cyan }
 function Good ($m) { Write-Host "  $m" -ForegroundColor Green }
 function Warn ($m) { Write-Host "  $m" -ForegroundColor Yellow }
+
+# --- 0. Bootstrap ----------------------------------------------------------
+# Piped from the web there is no file on disk, so $PSCommandPath is empty and
+# there is no project next to us yet. Fetch it, then hand over to the copy that
+# lands there -- which takes the normal path below.
+$here = if ($PSCommandPath) { Split-Path -Parent $PSCommandPath } else { $null }
+if (-not $here -or -not (Test-Path (Join-Path $here 'murmur.py'))) {
+    # The banner belongs to the real run, which starts once this hands over.
+    Step "Fetching Murmur into $InstallDir"
+
+    if (Test-Path (Join-Path $InstallDir 'murmur.py')) {
+        Good 'Already downloaded'
+        if ((Test-Path (Join-Path $InstallDir '.git')) -and
+            (Get-Command git -ErrorAction SilentlyContinue)) {
+            Say 'Updating to the latest version...'
+            git -C $InstallDir pull --ff-only --quiet
+        }
+    } elseif (Get-Command git -ErrorAction SilentlyContinue) {
+        git clone --depth 1 --quiet $REPO $InstallDir
+        if ($LASTEXITCODE -ne 0) { throw "Could not clone $REPO." }
+        Good 'Cloned'
+    } else {
+        # No git on this machine: GitHub will hand us a zip of the branch.
+        Say 'No git here, taking the zip instead...'
+        $zip = Join-Path $env:TEMP 'murmur-main.zip'
+        $stage = Join-Path $env:TEMP "murmur-unpack-$PID"
+        $progress = $ProgressPreference
+        try {
+            $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest "$REPO/archive/refs/heads/main.zip" -OutFile $zip -UseBasicParsing
+        } finally { $ProgressPreference = $progress }
+        Expand-Archive $zip $stage -Force
+        $parent = Split-Path $InstallDir
+        if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+        Move-Item (Join-Path $stage 'murmur-main') $InstallDir
+        Remove-Item $zip, $stage -Recurse -Force -ErrorAction SilentlyContinue
+        Good 'Downloaded'
+    }
+
+    & (Join-Path $InstallDir 'install.ps1') @PSBoundParameters
+    exit $LASTEXITCODE
+}
+
+$root = $here
+$modelDir = Join-Path $root 'models'
+$venv = Join-Path $root 'venv'
+$pythonw = Join-Path $venv 'Scripts\pythonw.exe'
 
 Write-Host "`nMurmur setup" -ForegroundColor Cyan
 Say "Reads your selected text aloud, offline. Nothing leaves this machine."
