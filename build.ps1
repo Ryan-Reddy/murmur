@@ -52,6 +52,9 @@ Step '3/4  Voice model'
 # rather than inside the archive -- 338 MB does not want to be unpacked to a
 # temp folder on every launch.
 Copy-Item (Join-Path $root 'models') (Join-Path $dist 'models') -Recurse -Force
+# The exe bundles espeak-ng and phonemizer, both GPL-3.0, so the licence has to
+# travel with the binary.
+Copy-Item (Join-Path $root 'LICENSE') (Join-Path $dist 'LICENSE.txt') -Force
 $mb = [math]::Round(((Get-ChildItem $dist -Recurse -File | Measure-Object Length -Sum).Sum / 1MB))
 Good "dist\Murmur is $mb MB"
 
