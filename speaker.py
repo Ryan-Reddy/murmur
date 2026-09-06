@@ -4,12 +4,14 @@ Usage:
     from speaker import Speaker
     s = Speaker("models/kokoro-v1.0.onnx", "models/voices-v1.0.bin")
     s.speak("Hello there.")   # non-blocking, streams sentence by sentence
+    s.repeat = True           # read it again until stopped
     s.stop()
 
 Optional callbacks (called from a worker thread):
     on_state(speaking: bool)   fires when speech starts and ends
-    on_sentence(text: str)     fires as each sentence begins playing
-    on_word(index: int)        fires as each word of that sentence begins
+    on_text(text: str)         fires at once with everything about to be read
+    on_sentence(text: str)     fires as each chunk begins playing
+    on_word(index: int)        fires as each word begins, counted across on_text
     on_pause(paused: bool)     fires on pause / resume
 """
 
@@ -25,6 +27,14 @@ import sounddevice as sd
 from kokoro_onnx import Kokoro
 
 DEFAULT_BLEND = (("bf_emma", 0.7), ("af_nicole", 0.3))
+
+# Between repeats: a soft chime, then quiet. Without a marker a repeat sounds
+# like the reader stumbling back to the top of the page.
+REPEAT_GAP = 1.1        # seconds of quiet after the chime
+CHIME_HZ = 660.0        # an E, high enough to cut through speech, low enough not to nag
+CHIME_SECONDS = 0.16
+CHIME_LEVEL = 0.10      # soft on purpose -- it is punctuation, not an alarm
+FALLBACK_RATE = 24000
 
 # ONNX Runtime defaults to one thread per core, and lets those threads spin-wait
 # between operators rather than sleep. On a many-core desktop that costs ~4.5
@@ -121,8 +131,10 @@ class Speaker:
         blend=DEFAULT_BLEND,
         speed: float = 1.0,
         volume: float = 1.0,
+        repeat: bool = False,
         threads: int = 0,
         on_state=None,
+        on_text=None,
         on_sentence=None,
         on_word=None,
         on_pause=None,
@@ -135,7 +147,9 @@ class Speaker:
         self.voice = self.blend_voice(blend)
         self.speed = speed
         self.volume = volume
+        self.repeat = repeat
         self._on_state = on_state or (lambda speaking: None)
+        self._on_text = on_text or (lambda text: None)
         self._on_sentence = on_sentence or (lambda text: None)
         self._on_word = on_word or (lambda index: None)
         self._on_pause = on_pause or (lambda paused: None)
@@ -218,6 +232,11 @@ class Speaker:
         sentences = split_sentences(text)
         if not sentences:
             return
+        # Say what is about to be read before anything slow happens. Waiting for
+        # the first chunk to synthesize meant the words appeared seconds after
+        # the hotkey, when they were known all along.
+        self._on_state(True)
+        self._on_text(" ".join(sentences))
         # PortAudio snapshots the device list at init; a monitor sleeping or an
         # output re-plugging strands streams on a dead endpoint (silent, no
         # error). Re-initializing here picks up the current default device.
@@ -226,28 +245,54 @@ class Speaker:
             sd._initialize()
         except Exception:
             pass
-        self._on_state(True)
         try:
-            q: queue.Queue = queue.Queue(maxsize=3)
-            threading.Thread(
-                target=self._produce, args=(sentences, q, stop), daemon=True
-            ).start()
             while not stop.is_set():
-                try:
-                    item = q.get(timeout=0.2)
-                except queue.Empty:
-                    continue
-                if item is None:
+                rate = self._read_through(sentences, stop)
+                # Checked here rather than up front, so the toggle can be
+                # flipped mid-read and takes effect at the end of this pass.
+                if stop.is_set() or not self.repeat:
                     break
-                sentence, audio, sample_rate, spans = item
-                if stop.is_set():
-                    break
-                self._on_sentence(sentence)
-                self._play(audio, sample_rate, spans, stop)
+                self._interlude(rate, stop)
         finally:
             self._on_state(False)
 
-    def _play(self, audio, sample_rate, spans, stop):
+    def _read_through(self, sentences, stop) -> int:
+        """One pass over the text. Returns the sample rate it played at."""
+        rate, spoken = FALLBACK_RATE, 0
+        q: queue.Queue = queue.Queue(maxsize=3)
+        threading.Thread(
+            target=self._produce, args=(sentences, q, stop), daemon=True
+        ).start()
+        while not stop.is_set():
+            try:
+                item = q.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if item is None:
+                break
+            sentence, audio, sample_rate, spans = item
+            rate = sample_rate
+            if stop.is_set():
+                break
+            self._on_sentence(sentence)
+            self._play(audio, sample_rate, spans, stop, spoken)
+            spoken += len(sentence.split())
+        return rate
+
+    def _interlude(self, sample_rate: int, stop: threading.Event):
+        """The chime and the quiet that mark one reading from the next."""
+        count = int(CHIME_SECONDS * sample_rate)
+        t = np.arange(count, dtype="float32") / sample_rate
+        tone = np.sin(2 * np.pi * CHIME_HZ * t).astype("float32")
+        # A raised-cosine envelope: a tone that starts and stops at full
+        # amplitude clicks, which is exactly what a soft marker must not do.
+        tone *= np.hanning(count).astype("float32") * CHIME_LEVEL
+        self._play(tone, sample_rate, [], stop)
+        quiet = time.monotonic() + REPEAT_GAP
+        while not stop.is_set() and time.monotonic() < quiet:
+            time.sleep(0.05)
+
+    def _play(self, audio, sample_rate, spans, stop, first_word=0):
         """Chunked playback so pause and stop can interrupt mid-sentence."""
         data = audio.reshape(-1, 1).astype("float32", copy=False)
         block = 2048  # 85 ms at 24 kHz: fine enough to follow words
@@ -264,7 +309,7 @@ class Speaker:
                     stream.start()
                 while word + 1 < len(spans) and i >= spans[word + 1][0]:
                     word += 1
-                    self._on_word(word)
+                    self._on_word(first_word + word)
                 chunk = data[i : i + block]
                 target = self._gain()
                 if target != gain:

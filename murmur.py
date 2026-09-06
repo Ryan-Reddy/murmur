@@ -178,7 +178,7 @@ def main():
         ROOT / "models" / "voices-v1.0.bin",
         blend=BLEND,
         on_state=lambda speaking: ui_events.put(("state", speaking)),
-        on_sentence=lambda text: ui_events.put(("sentence", text)),
+        on_text=lambda text: ui_events.put(("text", text)),
         on_word=lambda index: ui_events.put(("word", index)),
         on_pause=lambda paused: ui_events.put(("pause", paused)),
     )
@@ -227,6 +227,10 @@ def main():
         ).start()
         ui_events.put(("selectmode", select_mode["on"]))
 
+    def toggle_repeat():
+        speaker.repeat = not speaker.repeat
+        ui_events.put(("repeat", speaker.repeat))
+
     def read_selection_quietly():
         def go():
             time.sleep(0.15)  # let the app finalize the selection
@@ -263,7 +267,7 @@ def main():
 
     # The sentence being spoken, with the current word lit as it is reached.
     reader = tk.Text(
-        shell, height=3, width=58, wrap="word", relief="flat", cursor="arrow",
+        shell, height=4, width=58, wrap="word", relief="flat", cursor="arrow",
         bg=BG, fg=MUTED, font=("Segoe UI", 10), padx=14, pady=10,
         highlightthickness=0, borderwidth=0, spacing3=3, takefocus=0,
     )
@@ -309,8 +313,11 @@ def main():
                            highlightthickness=0, cursor="hand2")
     volume_bar.pack(side="left", pady=3)
 
+    repeat_btn = chip(controls, "🔁", lambda: toggle_repeat(), pad=8)
+    repeat_btn.pack(side="left", padx=(10, 0))
+
     select_btn = chip(controls, "⇱ select", lambda: toggle_select_mode(), pad=8)
-    select_btn.pack(side="left", padx=(10, 0))
+    select_btn.pack(side="left", padx=(6, 0))
 
     close_btn = chip(controls, "✕", lambda: speaker.stop(),
                      font=("Segoe UI", 10, "bold"), pad=8)
@@ -407,19 +414,21 @@ def main():
         near one, so it lands somewhere deliberate rather than almost-aligned."""
         root.update_idletasks()
         w, h = root.winfo_width(), root.winfo_height()
-        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        left, top, right, bottom = work_area()
         x, y = root.winfo_x(), root.winfo_y()
-        if x < SNAP:
-            x = 0
-        elif sw - (x + w) < SNAP:
-            x = sw - w
-        elif abs((x + w / 2) - sw / 2) < SNAP:
-            x = (sw - w) // 2
-        if y < SNAP:
-            y = 0
-        elif sh - (y + h) < SNAP:
-            y = sh - h
-        root.geometry(f"+{int(x)}+{int(y)}")
+        if x - left < SNAP:
+            x = left
+        elif right - (x + w) < SNAP:
+            x = right - w
+        elif abs((x + w / 2) - (left + right) / 2) < SNAP:
+            x = left + (right - left - w) // 2
+        if y - top < SNAP:
+            y = top
+        elif bottom - (y + h) < SNAP:
+            y = bottom - h
+        x = max(left, min(int(x), right - w))
+        y = max(top, min(int(y), bottom - h))
+        root.geometry(f"+{x}+{y}")
 
     drag = {"x": 0, "y": 0, "moved": False}
 
@@ -466,17 +475,37 @@ def main():
         play_btn.config(text="▶" if (pill["paused"] or idle) else "⏸")
         select_btn.rest = GREEN if select_mode["on"] else MUTED
         select_btn.config(fg=select_btn.rest)
+        repeat_btn.rest = GREEN if speaker.repeat else MUTED
+        repeat_btn.config(fg=repeat_btn.rest)
         pin_btn.rest = AMBER if pill["pinned"] else MUTED
         pin_btn.config(fg=pin_btn.rest)
         place_pill()
 
+    def work_area():
+        """The desktop minus the taskbar. Placing against the full screen
+        height put the control row underneath the taskbar, where the clicks
+        went to the taskbar instead of to Murmur."""
+        class RECT(ctypes.Structure):
+            _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                        ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+        rect = RECT()
+        if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):
+            return rect.left, rect.top, rect.right, rect.bottom
+        return 0, 0, root.winfo_screenwidth(), root.winfo_screenheight()
+
     def place_pill():
         root.update_idletasks()
+        left, top, right, bottom = work_area()
+        width, height = root.winfo_reqwidth(), root.winfo_reqheight()
         if pill["pos"]:
             x, y = pill["pos"]  # wherever it was dragged to, and left
         else:
-            x = (root.winfo_screenwidth() - root.winfo_reqwidth()) // 2
-            y = root.winfo_screenheight() - 150
+            x = left + (right - left - width) // 2
+            y = bottom - height - 12
+        # However it got its position, keep every control reachable.
+        x = max(left, min(x, right - width))
+        y = max(top, min(y, bottom - height))
         root.geometry(f"+{x}+{y}")
         root.deiconify()
 
@@ -589,6 +618,11 @@ def main():
             lambda icon, item: toggle_select_mode(),
             checked=lambda item: select_mode["on"],
         ),
+        pystray.MenuItem(
+            "Repeat: read it again until stopped",
+            lambda icon, item: toggle_repeat(),
+            checked=lambda item: speaker.repeat,
+        ),
         pystray.MenuItem("Pause / resume", lambda icon, item: speaker.toggle_pause()),
         pystray.MenuItem("Stop reading", lambda icon, item: speaker.stop()),
         pystray.MenuItem("Quit", quit_app),
@@ -604,7 +638,8 @@ def main():
         apps -- and tests -- can drive Murmur without taking over the keyboard.
 
             ::stop  ::pause  ::speed +1 | -1 | 1.25  ::volume 0.6
-            ::select on | off | toggle  ::pin on | off | toggle  ::read
+            ::select on | off | toggle  ::pin on | off | toggle
+            ::repeat on | off | toggle  ::read
         """
         name, _, arg = line[2:].strip().partition(" ")
         arg = arg.strip()
@@ -635,6 +670,10 @@ def main():
             wanted = {"on": True, "off": False}.get(arg, not pill["pinned"])
             if wanted != pill["pinned"]:
                 toggle_pin()
+        elif name == "repeat":
+            wanted = {"on": True, "off": False}.get(arg, not speaker.repeat)
+            if wanted != speaker.repeat:
+                toggle_repeat()
 
     # --- marshal speaker-thread events onto the tkinter thread ---
     def poll_events():
@@ -652,7 +691,7 @@ def main():
                         last_spoken["text"] = None  # allow re-reading later
                         hide_later(600)
                     render_pill()
-                elif kind == "sentence":
+                elif kind == "text":
                     pill["sentence"] = value
                     show_sentence(value)
                     render_pill()
@@ -671,6 +710,10 @@ def main():
                         flash(f"⚡  Speed {value}×")
                 elif kind == "volume":
                     set_volume(value)
+                elif kind == "repeat":
+                    render_pill()
+                    if not pill["speaking"]:
+                        flash("🔁  Repeat on" if value else "🔁  Repeat off")
                 elif kind == "command":
                     run_command(*value)
                 elif kind == "selectmode":

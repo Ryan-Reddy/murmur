@@ -20,15 +20,21 @@ Tweak the `BLEND` constant in `murmur.py` to taste.
 Select mode (also in the tray menu) is great for quick browsing; keep it off
 in terminals, where the copy it triggers (Ctrl+C) can mean "interrupt".
 
-While reading, a pill at the bottom of the screen shows the sentence being
-spoken with the current word lit as it is reached; words already read stay
-bright, the rest stay dim. Under it are the controls:
+The pill appears with the whole selection in it the moment you press the
+hotkey — about a millisecond, rather than waiting for the first audio — and
+lights each word as it is reached, scrolling to keep up. Words already read stay
+bright, the rest stay dim.
+
+Repeat reads it again until you stop it, with a soft chime and a beat of quiet
+between passes so a repeat is obviously a repeat rather than the reader
+stumbling back to the top. Under it are the controls:
 
 | Control | Does |
 |---|---|
 | ⏸ / ▶ | pause / resume |
 | − `1.0×` + | speed (the readout also takes the mouse wheel) |
 | 🔊 bars | volume — click or drag a bar, or use the wheel |
+| 🔁 | repeat — read it again until stopped, green while on |
 | ⇱ select | select mode on/off, green while on |
 | 📌 | pin it open — it stops hiding itself, amber while pinned |
 | ✕ | stop |
@@ -153,6 +159,7 @@ so another app — or a test — can drive Murmur without touching the keyboard:
 | `::volume 0.6` | 0.0 to 1.0 |
 | `::select on` / `off` / `toggle` | select mode |
 | `::pin on` / `off` / `toggle` | keep the pill on screen instead of letting it hide |
+| `::repeat on` / `off` / `toggle` | read it again until stopped |
 
 ## Standalone build (no Python needed)
 
