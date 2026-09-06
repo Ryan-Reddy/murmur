@@ -254,3 +254,19 @@ packaged build ships espeak-ng's DLL inside the exe.
 
 The model files are not redistributed here — the installer fetches them from the
 kokoro-onnx releases and checks them against a known SHA-256.
+
+## Tests and benchmarks
+
+```
+venv\Scripts\python.exe -m unittest discover -s tests -v
+venv\Scripts\python.exe bench.py
+```
+
+The tests cover everything that can be checked without making a sound — the
+splitter (including that it never drops a word), the lead-in ramp, the volume
+curve, the thread sizing, read-along spans, and that the mouse hook really does
+stop. Anything needing the model skips itself when `models\` is absent.
+
+`bench.py` measures synthesis cost across thread counts, time to first word,
+gaps and idle draw, and writes [BENCHMARKS.md](BENCHMARKS.md). It speaks aloud
+while running, because measuring the gaps means actually playing the audio.
