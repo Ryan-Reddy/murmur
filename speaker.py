@@ -38,14 +38,18 @@ FALLBACK_RATE = 24000
 
 # ONNX Runtime defaults to one thread per core, and lets those threads spin-wait
 # between operators rather than sleep. On a many-core desktop that costs ~4.5
-# CPU-seconds per second of speech and pins every core, for no useful gain: the
-# model is small and synthesis only has to stay ahead of playback. Four
-# non-spinning threads still run well ahead of real time for a fraction of the
-# energy. Six rather than four: measured under load, four was the worse of the
-# two on both axes at once -- slower (RTF 0.86 against 0.67) *and* dearer per
-# second of audio (1.40 CPU-seconds against 1.24), because the fixed per-run
-# overhead gets spread over a longer run. Override with MURMUR_THREADS.
-DEFAULT_THREADS = 6
+# CPU-seconds per second of speech and pins every core. Disabling the spinning is
+# what recovers nearly all of that; the thread count barely moves total CPU, so
+# it is free to spend on latency.
+#
+# Measured on a 16-core/32-thread Threadripper: RTF 0.67 at 6 threads, 0.49 at
+# 16, 0.47 at 32 -- so the knee is at the *physical* core count and SMT adds
+# almost nothing but heat. os.cpu_count() reports logical processors, hence the
+# halving. Capped at 16, because past that it stops paying for itself, and
+# floored at 2, below which synthesis stops keeping up with playback.
+# Override with MURMUR_THREADS.
+def _default_threads() -> int:
+    return max(2, min(16, (os.cpu_count() or 4) // 2))
 
 
 def _session(model_path, threads: int) -> rt.InferenceSession:
@@ -139,7 +143,7 @@ class Speaker:
         on_word=None,
         on_pause=None,
     ):
-        threads = threads or int(os.environ.get("MURMUR_THREADS", DEFAULT_THREADS))
+        threads = threads or int(os.environ.get("MURMUR_THREADS", 0) or _default_threads())
         threads = max(1, min(threads, os.cpu_count() or 1))
         self.kokoro = Kokoro.from_session(
             _session(model_path, threads), str(voices_path)
@@ -245,18 +249,46 @@ class Speaker:
             sd._initialize()
         except Exception:
             pass
+        # Opening an output stream costs ~375 ms, and doing it per chunk put
+        # that between every pair of chunks -- 1.1s of the gap in a
+        # three-chunk paragraph. One stream serves the whole utterance.
+        out = {"stream": None, "rate": None}
         try:
             while not stop.is_set():
-                rate = self._read_through(sentences, stop)
+                rate = self._read_through(sentences, stop, out)
                 # Checked here rather than up front, so the toggle can be
                 # flipped mid-read and takes effect at the end of this pass.
                 if stop.is_set() or not self.repeat:
                     break
-                self._interlude(rate, stop)
+                self._interlude(rate, stop, out)
         finally:
+            self._close(out)
             self._on_state(False)
 
-    def _read_through(self, sentences, stop) -> int:
+    def _stream(self, out, sample_rate):
+        """The utterance's output stream, opened on first use."""
+        if out["stream"] is not None and out["rate"] != sample_rate:
+            self._close(out)
+        if out["stream"] is None:
+            out["stream"] = sd.OutputStream(
+                samplerate=sample_rate, channels=1, dtype="float32"
+            )
+            out["stream"].start()
+            out["rate"] = sample_rate
+        return out["stream"]
+
+    @staticmethod
+    def _close(out):
+        stream = out["stream"]
+        out["stream"], out["rate"] = None, None
+        if stream is not None:
+            try:
+                stream.stop()
+                stream.close()
+            except Exception:
+                pass
+
+    def _read_through(self, sentences, stop, out) -> int:
         """One pass over the text. Returns the sample rate it played at."""
         rate, spoken = FALLBACK_RATE, 0
         q: queue.Queue = queue.Queue(maxsize=3)
@@ -275,11 +307,11 @@ class Speaker:
             if stop.is_set():
                 break
             self._on_sentence(sentence)
-            self._play(audio, sample_rate, spans, stop, spoken)
+            self._play(audio, sample_rate, spans, stop, spoken, out)
             spoken += len(sentence.split())
         return rate
 
-    def _interlude(self, sample_rate: int, stop: threading.Event):
+    def _interlude(self, sample_rate: int, stop: threading.Event, out=None):
         """The chime and the quiet that mark one reading from the next."""
         count = int(CHIME_SECONDS * sample_rate)
         t = np.arange(count, dtype="float32") / sample_rate
@@ -287,41 +319,43 @@ class Speaker:
         # A raised-cosine envelope: a tone that starts and stops at full
         # amplitude clicks, which is exactly what a soft marker must not do.
         tone *= np.hanning(count).astype("float32") * CHIME_LEVEL
-        self._play(tone, sample_rate, [], stop)
+        self._play(tone, sample_rate, [], stop, 0, out)
         quiet = time.monotonic() + REPEAT_GAP
         while not stop.is_set() and time.monotonic() < quiet:
             time.sleep(0.05)
 
-    def _play(self, audio, sample_rate, spans, stop, first_word=0):
+    def _play(self, audio, sample_rate, spans, stop, first_word=0, out=None):
         """Chunked playback so pause and stop can interrupt mid-sentence."""
         data = audio.reshape(-1, 1).astype("float32", copy=False)
         block = 2048  # 85 ms at 24 kHz: fine enough to follow words
         word, gain = -1, self._gain()
-        with sd.OutputStream(samplerate=sample_rate, channels=1, dtype="float32") as stream:
-            i = 0
-            while i < len(data) and not stop.is_set():
-                if self._paused.is_set():
-                    stream.stop()
-                    while self._paused.is_set() and not stop.is_set():
-                        time.sleep(0.05)
-                    if stop.is_set():
-                        break
-                    stream.start()
-                while word + 1 < len(spans) and i >= spans[word + 1][0]:
-                    word += 1
-                    self._on_word(first_word + word)
-                chunk = data[i : i + block]
-                target = self._gain()
-                if target != gain:
-                    # Step to the new volume across the block instead of at its
-                    # edge, or the jump in amplitude is audible as a click.
-                    ramp = np.linspace(gain, target, len(chunk), dtype="float32")
-                    chunk = chunk * ramp.reshape(-1, 1)
-                    gain = target
-                elif gain != 1.0:
-                    chunk = chunk * gain
-                stream.write(chunk)
-                i += block
+        if out is None:
+            out = {"stream": None, "rate": None}  # a one-off, e.g. from a test
+        stream = self._stream(out, sample_rate)
+        i = 0
+        while i < len(data) and not stop.is_set():
+            if self._paused.is_set():
+                stream.stop()
+                while self._paused.is_set() and not stop.is_set():
+                    time.sleep(0.05)
+                if stop.is_set():
+                    break
+                stream.start()
+            while word + 1 < len(spans) and i >= spans[word + 1][0]:
+                word += 1
+                self._on_word(first_word + word)
+            chunk = data[i : i + block]
+            target = self._gain()
+            if target != gain:
+                # Step to the new volume across the block instead of at its
+                # edge, or the jump in amplitude is audible as a click.
+                ramp = np.linspace(gain, target, len(chunk), dtype="float32")
+                chunk = chunk * ramp.reshape(-1, 1)
+                gain = target
+            elif gain != 1.0:
+                chunk = chunk * gain
+            stream.write(chunk)
+            i += block
 
     def _gain(self) -> float:
         """Loudness is perceived roughly logarithmically, so a linear slider

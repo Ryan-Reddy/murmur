@@ -111,19 +111,27 @@ Model files live in `models/` (`kokoro-v1.0.onnx` + `voices-v1.0.bin`).
 Idle Murmur costs nothing measurable; all the work happens while it is actually
 speaking. ONNX Runtime would by default give the model one thread per core and
 let those threads spin-wait between operators, which on a 32-thread desktop
-burned 4.5 CPU-seconds per second of speech. Murmur caps it at six non-spinning
-threads instead: about 1 CPU-second per second of speech, comfortably ahead of
-playback, and around half the memory.
+burned 4.5 CPU-seconds per second of speech. Murmur turns the spinning off and
+sizes the pool to the machine — `max(2, min(16, logical // 2))`, which is the
+physical core count on most desktops — for about a third of the original energy.
 
-Six rather than four because four turned out to be the worse of the two on both
-axes at once under load — slower *and* dearer per second of audio, since the
-fixed per-run overhead gets spread across a longer run.
+Disabling the spinning is what recovered nearly all of that; the thread count
+barely moves total CPU, so it is free to spend on latency. Measured on a
+16-core/32-thread Threadripper: RTF 0.67 at 6 threads, 0.49 at 16, 0.47 at 32.
+The knee is at the physical core count — SMT adds almost nothing but heat —
+hence the halving, capped at 16 and floored at 2. `MURMUR_THREADS` overrides it.
 
 Nothing is heard until the first chunk has finished rendering, so a long opening
 sentence used to mean seconds of silence — 6.6 of them for a 137-character one.
 The opening is now cut at commas into progressively larger pieces, each at most
 half again the size of the one before, which is as fast as synthesis can grow
-without falling behind playback. First word in 2.4 seconds instead of 6.6.
+without falling behind playback. First word in about 2 seconds instead of 6.6.
+
+Playback also used to open a fresh audio stream for every chunk, and opening one
+costs ~375 ms — 1.1 seconds of silence spread through a three-chunk paragraph,
+which sounded like synthesis falling behind but was the sound device being
+reopened. One stream now serves a whole utterance: gaps went from 1.29s to
+0.23s.
 
 Set `MURMUR_THREADS` to trade back the other way — higher starts the first
 sentence sooner without costing much more total CPU, lower is gentler on a

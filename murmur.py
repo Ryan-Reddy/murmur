@@ -43,6 +43,12 @@ BLEND = (("bf_emma", 0.7), ("af_nicole", 0.3))
 
 SPEEDS = [0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0]
 
+# How long the pill hangs about, in milliseconds. A read used to end and the
+# pill vanish 0.6s later, which is no use if you were reaching for pause.
+LINGER_AFTER_SPEECH = 4000
+LINGER_AFTER_TOUCH = 120_000   # once you have used it, assume you may again
+LINGER_TOAST = 2000            # a setting changed while nothing is being read
+
 # Pill palette.
 BG, FG, MUTED = "#1e1b2e", "#e8e4ff", "#8f87b8"
 ACCENT, GREEN, AMBER = "#7c5cff", "#34c77b", "#ffaa3c"
@@ -279,6 +285,12 @@ def main():
     controls = tk.Frame(shell, bg=BG)
     controls.pack(fill="x", padx=12, pady=(0, 9))
 
+    def touched():
+        """Any deliberate interaction keeps the pill up for a while, so a second
+        click never has to wait for it to come back."""
+        if not pill["pinned"] and not pill["speaking"]:
+            hide_later(LINGER_AFTER_TOUCH)
+
     def chip(parent, text, command, font=("Segoe UI", 10), pad=7):
         """A label that behaves like a flat button."""
         # pady 7 rather than 3: at 3 these were ~12x20 px, which is a poor
@@ -288,7 +300,7 @@ def main():
             padx=pad, pady=7, cursor="hand2",
         )
         widget.rest = MUTED
-        widget.bind("<Button-1>", lambda _e: command())
+        widget.bind("<Button-1>", lambda _e: (command(), touched()))
         widget.bind("<Enter>", lambda _e: widget.config(fg=FG))
         widget.bind("<Leave>", lambda _e: widget.config(fg=widget.rest))
         return widget
@@ -435,6 +447,7 @@ def main():
     def pill_press(event):
         drag["x"], drag["y"] = event.x_root, event.y_root
         drag["moved"] = False
+        touched()
         return "break"
 
     def pill_drag(event):
@@ -516,7 +529,7 @@ def main():
             root.after_cancel(hide_timer["id"])
             hide_timer["id"] = None
 
-    def hide_later(delay: int = 1800):
+    def hide_later(delay: int = LINGER_TOAST):
         cancel_hide()
 
         def done():
@@ -527,7 +540,7 @@ def main():
             # winfo_containing covers the buttons too, which <Leave> bindings
             # on the frames alone would miss.
             if root.winfo_containing(*root.winfo_pointerxy()) is not None:
-                hide_later(700)
+                hide_later(LINGER_AFTER_TOUCH)  # the cursor is on it; leave it
                 return
             root.withdraw()
 
@@ -689,7 +702,7 @@ def main():
                     else:
                         pill["paused"] = False
                         last_spoken["text"] = None  # allow re-reading later
-                        hide_later(600)
+                        hide_later(LINGER_AFTER_SPEECH)
                     render_pill()
                 elif kind == "text":
                     pill["sentence"] = value
