@@ -85,13 +85,12 @@ class SplitSentences(unittest.TestCase):
                 f"{len(before)} -> {len(after)} chars is too big a jump",
             )
 
-    def test_opening_breaks_only_at_punctuation(self):
-        """A gap at a comma is heard as a pause; mid-clause it is heard as a
-        fault. A short comma-less sentence is left whole on purpose."""
-        chunks = split_sentences(
-            "This opening sentence has no internal punctuation at all so it stays whole."
-        )
-        self.assertEqual(len(chunks), 1)
+    def test_short_comma_less_opening_is_left_whole(self):
+        """Breaking mid-clause costs an audible falling intonation, so it is
+        only worth it when the wait would otherwise be long."""
+        text = "This opening sentence has no internal punctuation so it stays whole."
+        self.assertLess(len(text), WORD_BREAK_OVER)
+        self.assertEqual(len(split_sentences(text)), 1)
 
     def test_very_long_comma_less_opening_is_broken_anyway(self):
         """Past a point, waiting is worse than an awkward break."""

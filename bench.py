@@ -2,8 +2,9 @@
 
     venv\\Scripts\\python.exe bench.py
 
-Takes a few minutes and speaks aloud during the end-to-end section, because
-measuring the gaps between chunks means actually playing them. Results are
+Takes a few minutes. The end-to-end section speaks aloud, repeatedly, because
+measuring the gaps between chunks means actually playing them -- pass --silent
+to skip it if somebody is trying to work. Results are
 machine-specific; the file records which machine they came from.
 """
 
@@ -149,7 +150,8 @@ def main():
 
     print("\nEnd to end (this one speaks aloud)...")
     e2e = end_to_end()
-    print(f"  first word {e2e['first_word_s']:.2f}s, gaps {e2e['gaps_s']:+.2f}s")
+    if e2e:
+        print(f"  first word {e2e['first_word_s']:.2f}s, gaps {e2e['gaps_s']:+.2f}s")
 
     print("\nIdle cost (20s)...")
     idle = idle_cost()
@@ -181,19 +183,21 @@ def main():
         f"{cheap['threads']}. The default picks `max(2, min(16, logical // 2))`, "
         "which lands on the physical core count.",
         "",
-        "## End to end",
-        "",
-        f"Reading a {len(PARAGRAPH)}-character paragraph at "
-        f"{e2e['threads']} threads, best of three:",
-        "",
-        "| | |",
-        "|---|---:|",
-        f"| Text on screen | {e2e['text_ms']:.1f} ms |",
-        f"| First spoken word | {e2e['first_word_s']:.2f} s |",
-        f"| Audio produced | {e2e['audio_s']:.2f} s |",
-        f"| Finished after | {e2e['finished_s']:.2f} s |",
-        f"| Gaps between chunks | {e2e['gaps_s']:+.2f} s |",
-        "",
+        *([] if not e2e else [
+            "## End to end",
+            "",
+            f"Reading a {len(PARAGRAPH)}-character paragraph at "
+            f"{e2e['threads']} threads, best of three:",
+            "",
+            "| | |",
+            "|---|---:|",
+            f"| Text on screen | {e2e['text_ms']:.1f} ms |",
+            f"| First spoken word | {e2e['first_word_s']:.2f} s |",
+            f"| Audio produced | {e2e['audio_s']:.2f} s |",
+            f"| Finished after | {e2e['finished_s']:.2f} s |",
+            f"| Gaps between chunks | {e2e['gaps_s']:+.2f} s |",
+            "",
+        ]),
         "## Idle",
         "",
         f"Loaded and silent: **{idle:.2f}% of one core** over 20 seconds. "
