@@ -33,11 +33,14 @@ stumbling back to the top. Under it are the controls:
 |---|---|
 | ⏸ / ▶ | pause / resume |
 | − `1.0×` + | speed (the readout also takes the mouse wheel) |
-| 🔊 bars | volume — click or drag a bar, or use the wheel |
-| 🔁 | repeat — read it again until stopped, green while on |
+| ♪ bars | volume — click or drag a bar, or use the wheel |
+| ↻ | repeat — read it again until stopped, green while on |
 | ⇱ select | select mode on/off, green while on |
-| 📌 | pin it open — it stops hiding itself, amber while pinned |
+| ◉ | pin it open — it stops hiding itself, amber while pinned |
+| ? | what everything does |
 | ✕ | dismiss — stops the reading and puts the pill away |
+
+Hovering any control explains it in the text area, and **?** lists the lot.
 
 Click the text itself to pause or resume, and **drag the pill anywhere**; it
 snaps to a screen edge or the centre line if you drop it near one, and stays
@@ -169,6 +172,7 @@ so another app — or a test — can drive Murmur without touching the keyboard:
 | `::pin on` / `off` / `toggle` | keep the pill on screen instead of letting it hide |
 | `::repeat on` / `off` / `toggle` | read it again until stopped |
 | `::close` | dismiss the pill |
+| `::help on` / `off` / `toggle` | show what everything does |
 
 ## Standalone build (no Python needed)
 

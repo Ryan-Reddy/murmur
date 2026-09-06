@@ -308,7 +308,39 @@ def main():
         cancel_hide()
         root.withdraw()
 
-    def chip(parent, text, command, font=("Segoe UI", 10), pad=7):
+    def set_reader(text):
+        """Put plain text in the reading area, with no word spans behind it."""
+        reader.config(state="normal")
+        reader.delete("1.0", "end")
+        reader.insert("end", text)
+        reader.config(state="disabled")
+        pill["words"] = []
+
+    hint = {"restore": None}
+
+    def show_hint(text):
+        """A control explains itself where the reading normally goes, so there
+        is no second window to place, fade or get in the way. Never during a
+        read: what is being spoken matters more than what a button does."""
+        if not text or pill["speaking"]:
+            return
+        if hint["restore"] is None:
+            hint["restore"] = reader.get("1.0", "end-1c")
+        set_reader(text)
+
+    def clear_hint():
+        if hint["restore"] is None:
+            return
+        set_reader(hint["restore"])
+        hint["restore"] = None
+
+    def explain(widget, text):
+        """Hover help for anything, chip or not."""
+        widget.bind("<Enter>", lambda _e: show_hint(text), add="+")
+        widget.bind("<Leave>", lambda _e: clear_hint(), add="+")
+        return widget
+
+    def chip(parent, text, command, tip=None, font=("Segoe UI", 10), pad=7):
         """A label that behaves like a flat button."""
         # pady 7 rather than 3: at 3 these were ~12x20 px, which is a poor
         # target even before the pill starts hiding itself.
@@ -320,43 +352,62 @@ def main():
         widget.bind("<Button-1>", lambda _e: (command(), touched()))
         widget.bind("<Enter>", lambda _e: widget.config(fg=FG))
         widget.bind("<Leave>", lambda _e: widget.config(fg=widget.rest))
-        return widget
+        return explain(widget, tip)
 
     play_btn = chip(controls, "⏸", lambda: speaker.toggle_pause(),
+                    tip=f"Pause or resume  ({HOTKEY_PAUSE}).  "
+                        "Clicking the text does the same.",
                     font=("Segoe UI", 12), pad=8)
     play_btn.pack(side="left")
 
-    slower_btn = chip(controls, "−", lambda: change_speed(-1), pad=9)
+    slower_btn = chip(controls, "−", lambda: change_speed(-1),
+                      tip=f"Slower  ({HOTKEY_SLOWER})", pad=9)
     slower_btn.pack(side="left", padx=(10, 0))
     speed_hud = tk.Label(controls, text="1.0×", fg=FG, bg=BG,
                          font=("Segoe UI", 9), padx=2, pady=3, width=5)
     speed_hud.pack(side="left")
-    faster_btn = chip(controls, "+", lambda: change_speed(+1), pad=9)
+    explain(speed_hud, "Speed. Click to go back to 1.0x, or roll the wheel.")
+    faster_btn = chip(controls, "+", lambda: change_speed(+1),
+                      tip=f"Faster  ({HOTKEY_FASTER})", pad=9)
     faster_btn.pack(side="left")
 
-    volume_icon = tk.Label(controls, text="🔊", fg=MUTED, bg=BG,
+    # Plain BMP symbols rather than emoji: Segoe UI has no glyph for 🔊, 🔁 or
+    # 📌, so they drew as empty boxes on the control row.
+    volume_icon = tk.Label(controls, text="♪", fg=MUTED, bg=BG,
                            font=("Segoe UI", 9), padx=6, pady=3)
     volume_icon.pack(side="left", padx=(10, 0))
+    explain(volume_icon, "Click to mute or unmute")
     BARS = 7
     volume_bar = tk.Canvas(controls, width=BARS * 8, height=16, bg=BG,
                            highlightthickness=0, cursor="hand2")
     volume_bar.pack(side="left", pady=3)
+    explain(volume_bar, "Volume: click or drag a bar, or roll the wheel over it")
 
-    repeat_btn = chip(controls, "🔁", lambda: toggle_repeat(), pad=8)
+    repeat_btn = chip(controls, "↻", lambda: toggle_repeat(),
+                      tip="Repeat: read it again until you stop it, with a "
+                          "chime between", pad=8)
     repeat_btn.pack(side="left", padx=(10, 0))
 
-    select_btn = chip(controls, "⇱ select", lambda: toggle_select_mode(), pad=8)
+    select_btn = chip(controls, "⇱ select", lambda: toggle_select_mode(),
+                      tip=f"Select mode  ({HOTKEY_SELECTMODE}): read every new "
+                          "selection as you make it. Leave it off in terminals.",
+                      pad=8)
     select_btn.pack(side="left", padx=(6, 0))
 
     close_btn = chip(controls, "✕", close_pill,
+                     tip="Stop and put this away",
                      font=("Segoe UI", 10, "bold"), pad=8)
     close_btn.pack(side="right")
-    pin_btn = chip(controls, "📌", lambda: toggle_pin(), pad=8)
+    help_btn = chip(controls, "?", lambda: toggle_help(),
+                    tip="What everything does", pad=8)
+    help_btn.pack(side="right")
+    pin_btn = chip(controls, "◉", lambda: toggle_pin(),
+                   tip="Keep this on screen instead of letting it hide", pad=8)
     pin_btn.pack(side="right")
 
     pill = {"sentence": "", "paused": False, "speaking": False,
             "words": [], "volume": 1.0, "pinned": False, "muted": 0.0,
-            "pos": None, "dismissed": False}
+            "pos": None, "dismissed": False, "helping": False}
 
     # --- volume -----------------------------------------------------------
     def render_volume():
@@ -423,6 +474,22 @@ def main():
         reader.tag_add("said", "1.0", start)
         reader.tag_add("now", start, stop)
         reader.see(start)  # long sentences scroll to keep the word in view
+
+    # Kept short enough to fit the four wrapped lines the reading area has.
+    HELP = (
+        "⏸ pause   − + speed   ♪ volume   ↻ repeat   ⇱ read on select"
+        "\n"
+        "◉ keep open   ✕ close   "
+        f"·   {HOTKEY_READ} reads the selection   ·   {HOTKEY_STOP} stops"
+    )
+
+    def toggle_help():
+        pill["helping"] = not pill["helping"]
+        hint["restore"] = None
+        set_reader(HELP if pill["helping"] else "")
+        render_pill()
+        if not pill["speaking"]:
+            hide_later(LINGER_AFTER_TOUCH)
 
     # --- pin, drag and snap ------------------------------------------------
     def toggle_pin():
@@ -509,6 +576,11 @@ def main():
         repeat_btn.config(fg=repeat_btn.rest)
         pin_btn.rest = AMBER if pill["pinned"] else MUTED
         pin_btn.config(fg=pin_btn.rest)
+        # The one control most people want is brighter than the rest.
+        play_btn.rest = FG
+        play_btn.config(fg=FG)
+        help_btn.rest = ACCENT if pill["helping"] else MUTED
+        help_btn.config(fg=help_btn.rest)
         place_pill()
 
     def work_area():
@@ -670,7 +742,7 @@ def main():
 
             ::stop  ::pause  ::speed +1 | -1 | 1.25  ::volume 0.6
             ::select on | off | toggle  ::pin on | off | toggle
-            ::repeat on | off | toggle  ::read  ::close
+            ::repeat on | off | toggle  ::read  ::close  ::help
         """
         name, _, arg = line[2:].strip().partition(" ")
         arg = arg.strip()
@@ -687,6 +759,10 @@ def main():
     def run_command(name: str, arg: str):
         if name == "close":
             close_pill()
+        elif name == "help":
+            wanted = {"on": True, "off": False}.get(arg, not pill["helping"])
+            if wanted != pill["helping"]:
+                toggle_help()
         elif name == "speed":
             if arg.startswith(("+", "-")):
                 change_speed(int(arg))
