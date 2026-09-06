@@ -40,14 +40,35 @@ Select mode is the only thing that wants mouse events, so Murmur's mouse hook
 exists exactly as long as select mode does — with it off, Murmur is not in the
 system's mouse input path at all.
 
+## Install
+
+Clone the repo and double-click **`Install.cmd`**. It finds (or installs) Python,
+builds the virtual environment, downloads the voice model, and offers to start
+Murmur with Windows.
+
+```
+git clone https://github.com/Ryan-Reddy/murmur
+cd murmur
+.\Install.cmd
+```
+
+The two model files are 338 MB, far too big for git, so they are not in the
+clone — the installer fetches them from the
+[kokoro-onnx releases](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0)
+and checks them against a known SHA-256 before keeping them. It is safe to run
+again; anything already in place is left alone. `-Unattended` skips the
+questions, `-Autostart` answers the startup one with yes.
+
+That one download is the only time Murmur touches the network. After it, the
+machine can be offline forever.
+
 ## Run
 
 ```
 venv\Scripts\python.exe murmur.py
 ```
 
-Model files live in `models/` (`kokoro-v1.0.onnx` + `voices-v1.0.bin`, from the
-[kokoro-onnx releases](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0)).
+Model files live in `models/` (`kokoro-v1.0.onnx` + `voices-v1.0.bin`).
 
 ## CPU use
 
@@ -121,8 +142,9 @@ s.speak("Hello there.")   # non-blocking, streams sentence by sentence
 s.stop()
 ```
 
-Optional `on_state(speaking)` / `on_sentence(text)` callbacks give you
-progress feedback, and `blend=` / `speed=` customize the voice.
+Optional `on_state(speaking)` / `on_sentence(text)` / `on_word(index)` callbacks
+give you progress feedback — `on_word` is what drives the read-along highlight —
+and `blend=` / `speed=` / `volume=` / `threads=` customize the rest.
 
 ## Voice auditions
 
