@@ -33,6 +33,19 @@ venv\Scripts\python.exe murmur.py
 Model files live in `models/` (`kokoro-v1.0.onnx` + `voices-v1.0.bin`, from the
 [kokoro-onnx releases](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0)).
 
+## CPU use
+
+Idle Murmur costs nothing measurable; all the work happens while it is actually
+speaking. ONNX Runtime would by default give the model one thread per core and
+let those threads spin-wait between operators, which on a 32-thread desktop
+burned 4.5 CPU-seconds per second of speech. Murmur caps it at four
+non-spinning threads instead: about 1 CPU-second per second of speech, still
+roughly twice as fast as playback, and around half the memory.
+
+Set `MURMUR_THREADS` to trade back the other way -- higher starts the first
+sentence sooner without costing much more total CPU, lower is gentler on a
+laptop. Below two threads synthesis stops keeping up with playback.
+
 ## Text-in port (voice service for other apps)
 
 While running, Murmur listens on `127.0.0.1:52719`. Any local app can send

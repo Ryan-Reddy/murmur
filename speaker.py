@@ -12,15 +12,39 @@ Optional callbacks (called from a worker thread):
     on_pause(paused: bool)     fires on pause / resume
 """
 
+import os
 import queue
 import re
 import threading
 import time
 
+import onnxruntime as rt
 import sounddevice as sd
 from kokoro_onnx import Kokoro
 
 DEFAULT_BLEND = (("bf_emma", 0.7), ("af_nicole", 0.3))
+
+# ONNX Runtime defaults to one thread per core, and lets those threads spin-wait
+# between operators rather than sleep. On a many-core desktop that costs ~4.5
+# CPU-seconds per second of speech and pins every core, for no useful gain: the
+# model is small and synthesis only has to stay ahead of playback. Four
+# non-spinning threads still run at ~2x real time for about a fifth of the
+# energy. Override with MURMUR_THREADS if you want a different trade.
+DEFAULT_THREADS = 4
+
+
+def _session(model_path, threads: int) -> rt.InferenceSession:
+    """A CPU-frugal inference session: few threads, and none of them spinning."""
+    options = rt.SessionOptions()
+    options.intra_op_num_threads = threads
+    options.inter_op_num_threads = 1
+    options.execution_mode = rt.ExecutionMode.ORT_SEQUENTIAL
+    # Sleep while waiting for the next operator instead of burning a core on it.
+    options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+    options.add_session_config_entry("session.inter_op.allow_spinning", "0")
+    return rt.InferenceSession(
+        str(model_path), options, providers=["CPUExecutionProvider"]
+    )
 
 
 def split_sentences(text: str) -> list[str]:
@@ -47,11 +71,16 @@ class Speaker:
         voices_path,
         blend=DEFAULT_BLEND,
         speed: float = 1.0,
+        threads: int = 0,
         on_state=None,
         on_sentence=None,
         on_pause=None,
     ):
-        self.kokoro = Kokoro(str(model_path), str(voices_path))
+        threads = threads or int(os.environ.get("MURMUR_THREADS", DEFAULT_THREADS))
+        threads = max(1, min(threads, os.cpu_count() or 1))
+        self.kokoro = Kokoro.from_session(
+            _session(model_path, threads), str(voices_path)
+        )
         self.voice = self.blend_voice(blend)
         self.speed = speed
         self._on_state = on_state or (lambda speaking: None)

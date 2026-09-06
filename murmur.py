@@ -26,6 +26,7 @@ import pyperclip
 import pystray
 from PIL import Image, ImageDraw
 
+import winshutdown
 from speaker import Speaker
 
 # ------------------------------------------------------------------ config
@@ -274,11 +275,25 @@ def main():
         flash_timer["id"] = root.after(1400, done)
 
     # --- tray ---
-    def quit_app(icon, _item):
+    def release_hooks():
+        # The global keyboard and mouse hooks are the only things Murmur leaves
+        # in other processes; drop them before anything slower.
         speaker.stop()
-        keyboard.unhook_all()
+        try:
+            keyboard.unhook_all()
+        except Exception:
+            pass
+        try:
+            mouse.unhook_all()
+        except Exception:
+            pass
+
+    def quit_app(icon, _item):
+        release_hooks()
         icon.stop()
         root.after(0, root.destroy)
+
+    winshutdown.install(release_hooks)
 
     speed_menu = pystray.Menu(
         *[
