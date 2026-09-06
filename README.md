@@ -255,6 +255,11 @@ packaged build ships espeak-ng's DLL inside the exe.
 The model files are not redistributed here — the installer fetches them from the
 kokoro-onnx releases and checks them against a known SHA-256.
 
+## Why it is built this way
+
+[DECISIONS.md](DECISIONS.md) records the non-obvious choices and the numbers
+behind them — including the ones I got wrong first and had to correct.
+
 ## Tests and benchmarks
 
 ```
