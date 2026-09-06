@@ -30,7 +30,13 @@ bright, the rest stay dim. Under it are the controls:
 | − `1.0×` + | speed (the readout also takes the mouse wheel) |
 | 🔊 bars | volume — click or drag a bar, or use the wheel |
 | ⇱ select | select mode on/off, green while on |
+| 📌 | pin it open — it stops hiding itself, amber while pinned |
 | ✕ | stop |
+
+Click the text itself to pause or resume, and **drag the pill anywhere**; it
+snaps to a screen edge or the centre line if you drop it near one, and stays
+where you left it. Pin it if you want the controls to hand rather than only
+during a read.
 
 The pill hides a moment after reading ends, but never while the pointer is on
 it, so there is time to reach a control. The tray icon is green while speaking,
@@ -146,6 +152,7 @@ so another app — or a test — can drive Murmur without touching the keyboard:
 | `::speed +1` / `::speed -1` / `::speed 1.25` | a step at a time, or the nearest preset |
 | `::volume 0.6` | 0.0 to 1.0 |
 | `::select on` / `off` / `toggle` | select mode |
+| `::pin on` / `off` / `toggle` | keep the pill on screen instead of letting it hide |
 
 ## Standalone build (no Python needed)
 

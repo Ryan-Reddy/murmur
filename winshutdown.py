@@ -32,9 +32,23 @@ WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, WPARAM, LPAR
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
+# Every one of these needs its types declared. Without them ctypes assumes a
+# C int return, and a module handle above 2^31 -- which ASLR hands out perhaps
+# half the time -- is silently truncated, so CreateWindowExW then fails with an
+# overflow and Murmur goes back to blocking shutdown. It worked when tested and
+# broke on a later launch, which is exactly what that looks like.
 user32.DefWindowProcW.restype = LRESULT
 user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, WPARAM, LPARAM]
+kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+user32.RegisterClassW.restype = wintypes.ATOM
 user32.CreateWindowExW.restype = wintypes.HWND
+user32.CreateWindowExW.argtypes = [
+    wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+    wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID,
+]
+user32.PostThreadMessageW.argtypes = [wintypes.DWORD, wintypes.UINT, WPARAM, LPARAM]
 
 
 class WNDCLASS(ctypes.Structure):

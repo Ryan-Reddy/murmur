@@ -57,6 +57,11 @@ user32.SetWindowsHookExW.argtypes = [
 user32.CallNextHookEx.restype = LRESULT
 user32.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, WPARAM, LPARAM]
 user32.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
+# Same reasoning as winshutdown.py: undeclared ctypes signatures truncate
+# handles and thread ids on 64-bit.
+user32.PostThreadMessageW.argtypes = [wintypes.DWORD, wintypes.UINT, WPARAM, LPARAM]
+kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+user32.GetDoubleClickTime.restype = wintypes.UINT
 
 
 class MouseButtons:

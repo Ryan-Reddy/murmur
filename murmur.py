@@ -219,10 +219,12 @@ def main():
         # desktop, and while it is busy synthesizing that shows up as laggy
         # input. Select mode is the only thing that wants clicks, so the hook
         # exists exactly as long as select mode does.
-        if select_mode["on"]:
-            mouse_hook.start()
-        else:
-            mouse_hook.stop()
+        # start() waits on the hook thread and stop() joins it; on the tkinter
+        # thread that freezes the pill mid-click, so it happens off to the side.
+        threading.Thread(
+            target=mouse_hook.start if select_mode["on"] else mouse_hook.stop,
+            daemon=True,
+        ).start()
         ui_events.put(("selectmode", select_mode["on"]))
 
     def read_selection_quietly():
@@ -275,9 +277,11 @@ def main():
 
     def chip(parent, text, command, font=("Segoe UI", 10), pad=7):
         """A label that behaves like a flat button."""
+        # pady 7 rather than 3: at 3 these were ~12x20 px, which is a poor
+        # target even before the pill starts hiding itself.
         widget = tk.Label(
             parent, text=text, fg=MUTED, bg=BG, font=font,
-            padx=pad, pady=3, cursor="hand2",
+            padx=pad, pady=7, cursor="hand2",
         )
         widget.rest = MUTED
         widget.bind("<Button-1>", lambda _e: command())
@@ -286,15 +290,15 @@ def main():
         return widget
 
     play_btn = chip(controls, "⏸", lambda: speaker.toggle_pause(),
-                    font=("Segoe UI", 12), pad=4)
+                    font=("Segoe UI", 12), pad=8)
     play_btn.pack(side="left")
 
-    slower_btn = chip(controls, "−", lambda: change_speed(-1), pad=5)
+    slower_btn = chip(controls, "−", lambda: change_speed(-1), pad=9)
     slower_btn.pack(side="left", padx=(10, 0))
     speed_hud = tk.Label(controls, text="1.0×", fg=FG, bg=BG,
                          font=("Segoe UI", 9), padx=2, pady=3, width=5)
     speed_hud.pack(side="left")
-    faster_btn = chip(controls, "+", lambda: change_speed(+1), pad=5)
+    faster_btn = chip(controls, "+", lambda: change_speed(+1), pad=9)
     faster_btn.pack(side="left")
 
     volume_icon = tk.Label(controls, text="🔊", fg=MUTED, bg=BG,
@@ -309,11 +313,14 @@ def main():
     select_btn.pack(side="left", padx=(10, 0))
 
     close_btn = chip(controls, "✕", lambda: speaker.stop(),
-                     font=("Segoe UI", 10, "bold"), pad=6)
+                     font=("Segoe UI", 10, "bold"), pad=8)
     close_btn.pack(side="right")
+    pin_btn = chip(controls, "📌", lambda: toggle_pin(), pad=8)
+    pin_btn.pack(side="right")
 
     pill = {"sentence": "", "paused": False, "speaking": False,
-            "words": [], "volume": 1.0}
+            "words": [], "volume": 1.0, "pinned": False, "muted": 0.0,
+            "pos": None}
 
     # --- volume -----------------------------------------------------------
     def render_volume():
@@ -337,6 +344,17 @@ def main():
         # Snap to whole bars, so clicking a bar fills exactly that bar.
         set_volume(max(1, min(BARS, round(x / 8 + 0.5))) / BARS)
 
+    def toggle_mute():
+        if pill["volume"] > 0:
+            pill["muted"] = pill["volume"]
+            set_volume(0.0)
+        else:
+            set_volume(pill["muted"] or 1.0)
+
+    volume_icon.bind("<Button-1>", lambda _e: toggle_mute())
+    volume_icon.config(cursor="hand2")
+    speed_hud.bind("<Button-1>", lambda _e: change_speed(SPEEDS.index(1.0) - speed_index))
+    speed_hud.config(cursor="hand2")
     volume_bar.bind("<Button-1>", lambda e: volume_from_x(e.x))
     volume_bar.bind("<B1-Motion>", lambda e: volume_from_x(e.x))
     step = 1 / BARS
@@ -370,17 +388,95 @@ def main():
         reader.tag_add("now", start, stop)
         reader.see(start)  # long sentences scroll to keep the word in view
 
+    # --- pin, drag and snap ------------------------------------------------
+    def toggle_pin():
+        pill["pinned"] = not pill["pinned"]
+        if pill["pinned"]:
+            cancel_hide()
+            if not pill["speaking"] and not pill["words"]:
+                show_sentence("Murmur is listening. " + HOTKEY_READ + " reads your selection.")
+            render_pill()
+        else:
+            render_pill()
+            hide_later()
+
+    SNAP = 40
+
+    def snap_pill():
+        """Pull the pill onto an edge or the centre line if it was dropped
+        near one, so it lands somewhere deliberate rather than almost-aligned."""
+        root.update_idletasks()
+        w, h = root.winfo_width(), root.winfo_height()
+        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        x, y = root.winfo_x(), root.winfo_y()
+        if x < SNAP:
+            x = 0
+        elif sw - (x + w) < SNAP:
+            x = sw - w
+        elif abs((x + w / 2) - sw / 2) < SNAP:
+            x = (sw - w) // 2
+        if y < SNAP:
+            y = 0
+        elif sh - (y + h) < SNAP:
+            y = sh - h
+        root.geometry(f"+{int(x)}+{int(y)}")
+
+    drag = {"x": 0, "y": 0, "moved": False}
+
+    def pill_press(event):
+        drag["x"], drag["y"] = event.x_root, event.y_root
+        drag["moved"] = False
+        return "break"
+
+    def pill_drag(event):
+        dx, dy = event.x_root - drag["x"], event.y_root - drag["y"]
+        if not drag["moved"] and abs(dx) + abs(dy) < 4:
+            return "break"  # a click with a shaky hand, not a drag
+        drag["moved"] = True
+        root.geometry(f"+{root.winfo_x() + dx}+{root.winfo_y() + dy}")
+        drag["x"], drag["y"] = event.x_root, event.y_root
+        return "break"
+
+    def pill_drop(event):
+        if not drag["moved"]:
+            return None
+        snap_pill()
+        pill["pos"] = (root.winfo_x(), root.winfo_y())
+        return "break"
+
+    def reader_release(event):
+        # Dragging moves the pill; a plain click on the body pauses, which is
+        # what the pill did before it grew a control row.
+        if pill_drop(event) is None:
+            speaker.toggle_pause()
+        return "break"
+
+    for widget in (shell, controls):
+        widget.bind("<Button-1>", pill_press)
+        widget.bind("<B1-Motion>", pill_drag)
+        widget.bind("<ButtonRelease-1>", pill_drop)
+    reader.bind("<Button-1>", pill_press)
+    reader.bind("<B1-Motion>", pill_drag)
+    reader.bind("<ButtonRelease-1>", reader_release)
+    reader.config(cursor="hand2")
+
     # --- layout -----------------------------------------------------------
     def render_pill():
-        play_btn.config(text="▶" if pill["paused"] else "⏸")
+        idle = not pill["speaking"]
+        play_btn.config(text="▶" if (pill["paused"] or idle) else "⏸")
         select_btn.rest = GREEN if select_mode["on"] else MUTED
         select_btn.config(fg=select_btn.rest)
+        pin_btn.rest = AMBER if pill["pinned"] else MUTED
+        pin_btn.config(fg=pin_btn.rest)
         place_pill()
 
     def place_pill():
         root.update_idletasks()
-        x = (root.winfo_screenwidth() - root.winfo_reqwidth()) // 2
-        y = root.winfo_screenheight() - 150
+        if pill["pos"]:
+            x, y = pill["pos"]  # wherever it was dragged to, and left
+        else:
+            x = (root.winfo_screenwidth() - root.winfo_reqwidth()) // 2
+            y = root.winfo_screenheight() - 150
         root.geometry(f"+{x}+{y}")
         root.deiconify()
 
@@ -396,7 +492,7 @@ def main():
 
         def done():
             hide_timer["id"] = None
-            if pill["speaking"]:
+            if pill["speaking"] or pill["pinned"]:
                 return
             # Never pull the controls out from under a reaching cursor.
             # winfo_containing covers the buttons too, which <Leave> bindings
@@ -508,7 +604,7 @@ def main():
         apps -- and tests -- can drive Murmur without taking over the keyboard.
 
             ::stop  ::pause  ::speed +1 | -1 | 1.25  ::volume 0.6
-            ::select on | off | toggle  ::read
+            ::select on | off | toggle  ::pin on | off | toggle  ::read
         """
         name, _, arg = line[2:].strip().partition(" ")
         arg = arg.strip()
@@ -535,6 +631,10 @@ def main():
             wanted = {"on": True, "off": False}.get(arg, not select_mode["on"])
             if wanted != select_mode["on"]:
                 toggle_select_mode()
+        elif name == "pin":
+            wanted = {"on": True, "off": False}.get(arg, not pill["pinned"])
+            if wanted != pill["pinned"]:
+                toggle_pin()
 
     # --- marshal speaker-thread events onto the tkinter thread ---
     def poll_events():
