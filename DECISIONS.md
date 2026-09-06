@@ -46,6 +46,29 @@ being a downgrade:
   mid-clause is heard as a fault. A comma-less opening is left whole unless it is
   long enough that waiting is clearly worse.
 
+### How small the opening can get
+
+The pipeline already renders chunk 2 while chunk 1 plays, so the only
+unavoidable wait is chunk 1 itself. How short it can be is bounded by the fixed
+cost of an inference — measured at **0.11 s**, plus ~0.53 s per second of audio
+produced. An opening chunk only has to exceed ~0.2 s of audio to render faster
+than it plays, so the maths is not the constraint. **Punctuation is.**
+
+Sweeping the lead-in size showed the number of breaks never changes — one per
+paragraph regardless, about **0.4 per five seconds of audio**, or one every
+twelve seconds. Only the wait moves:
+
+| policy | first word | breaks per 5s |
+|---|---:|---:|
+| no lead-in | 6.6s | 0.40 |
+| break at commas | 3.3s | 0.42 |
+| also break at words over 110 chars | 2.6s | 0.42 |
+
+Since breaking more does not cost more breaks, the threshold for accepting an
+audible mid-clause break dropped from 250 characters to 110 — about 3.7 seconds
+of silence, which is where waiting stops being the better option. A comma-less
+sentence that used to wait 6.6 s now starts at 4.2 s, with the same one break.
+
 ## One audio stream per utterance
 
 Playback opened a fresh `sd.OutputStream` for every chunk. Opening one costs

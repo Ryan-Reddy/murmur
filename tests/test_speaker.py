@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT))
 from speaker import (  # noqa: E402
     LEAD_IN_FIRST,
     LEAD_IN_GROWTH,
+    WORD_BREAK_OVER,
     Speaker,
     _default_threads,
     _split_at,
@@ -96,6 +97,17 @@ class SplitSentences(unittest.TestCase):
         """Past a point, waiting is worse than an awkward break."""
         text = "word " * 80 + "end."
         self.assertGreater(len(split_sentences(text)), 1)
+
+    def test_word_break_threshold(self):
+        """Pins where the trade flips. Comfortably under stays whole, well over
+        gets broken; the exact boundary depends on where the words fall."""
+        short = "word " * (WORD_BREAK_OVER // 10) + "end."
+        self.assertLess(len(short), WORD_BREAK_OVER)
+        self.assertEqual(len(split_sentences(short)), 1)
+
+        long_ = "word " * (WORD_BREAK_OVER // 2) + "end."
+        self.assertGreater(len(long_), WORD_BREAK_OVER)
+        self.assertGreater(len(split_sentences(long_)), 1)
 
     def test_long_sentences_are_capped(self):
         """Kokoro degrades on very long inputs."""

@@ -77,6 +77,15 @@ def _session(model_path, threads: int) -> rt.InferenceSession:
 LEAD_IN_FIRST = 70      # characters to aim for in the opening piece
 LEAD_IN_GROWTH = 1.5    # each next piece may be this much bigger
 LEAD_IN_STEPS = 4       # after which the buffer has enough slack
+# Above this many characters, an opening with no comma in it may be broken at a
+# word instead. The break is audible -- the model gives the fragment a falling,
+# sentence-final intonation -- so it is only worth it once the alternative is a
+# long silence. A comma-less sentence costs roughly 0.11 + 0.033 per character
+# in seconds before its first word, so 110 characters is about 3.7 seconds of
+# nothing, which is where waiting stops being the better option. Measured on
+# such a sentence: 5.7s to the first word unbroken against 4.3s broken, with the
+# same number of gaps either way (~0.4 per five seconds of audio).
+WORD_BREAK_OVER = 110
 
 
 def _split_at(text: str, limit: int, allow_words: bool = False):
@@ -118,7 +127,7 @@ def split_sentences(text: str) -> list[str]:
     for _ in range(LEAD_IN_STEPS):
         if at >= len(out):
             break
-        piece = _split_at(out[at], int(limit), allow_words=len(out[at]) > 250)
+        piece = _split_at(out[at], int(limit), allow_words=len(out[at]) > WORD_BREAK_OVER)
         if piece is None:
             break
         out[at : at + 1] = list(piece)
