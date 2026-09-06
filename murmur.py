@@ -288,8 +288,25 @@ def main():
     def touched():
         """Any deliberate interaction keeps the pill up for a while, so a second
         click never has to wait for it to come back."""
-        if not pill["pinned"] and not pill["speaking"]:
-            hide_later(LINGER_AFTER_TOUCH)
+        if pill["pinned"] or pill["speaking"] or not root.winfo_ismapped():
+            return
+        hide_later(LINGER_AFTER_TOUCH)
+
+    def close_pill():
+        """The X dismisses the pill, not merely the audio.
+
+        It used to just call stop(), which does nothing when nothing is
+        playing -- so on an idle or pinned pill the button appeared dead. It
+        went unnoticed while the pill still hid itself after 600ms.
+        """
+        # Set before stopping: stop() lands a state event on the queue, and the
+        # handler for it re-renders -- which used to pull the pill straight back
+        # onto the screen a fraction of a second after it was dismissed.
+        pill["dismissed"] = True
+        pill["pinned"] = False  # an explicit dismissal outranks the pin
+        speaker.stop()
+        cancel_hide()
+        root.withdraw()
 
     def chip(parent, text, command, font=("Segoe UI", 10), pad=7):
         """A label that behaves like a flat button."""
@@ -331,7 +348,7 @@ def main():
     select_btn = chip(controls, "⇱ select", lambda: toggle_select_mode(), pad=8)
     select_btn.pack(side="left", padx=(6, 0))
 
-    close_btn = chip(controls, "✕", lambda: speaker.stop(),
+    close_btn = chip(controls, "✕", close_pill,
                      font=("Segoe UI", 10, "bold"), pad=8)
     close_btn.pack(side="right")
     pin_btn = chip(controls, "📌", lambda: toggle_pin(), pad=8)
@@ -339,7 +356,7 @@ def main():
 
     pill = {"sentence": "", "paused": False, "speaking": False,
             "words": [], "volume": 1.0, "pinned": False, "muted": 0.0,
-            "pos": None}
+            "pos": None, "dismissed": False}
 
     # --- volume -----------------------------------------------------------
     def render_volume():
@@ -520,7 +537,8 @@ def main():
         x = max(left, min(x, right - width))
         y = max(top, min(y, bottom - height))
         root.geometry(f"+{x}+{y}")
-        root.deiconify()
+        if not pill["dismissed"]:
+            root.deiconify()
 
     hide_timer = {"id": None}
 
@@ -652,7 +670,7 @@ def main():
 
             ::stop  ::pause  ::speed +1 | -1 | 1.25  ::volume 0.6
             ::select on | off | toggle  ::pin on | off | toggle
-            ::repeat on | off | toggle  ::read
+            ::repeat on | off | toggle  ::read  ::close
         """
         name, _, arg = line[2:].strip().partition(" ")
         arg = arg.strip()
@@ -667,7 +685,9 @@ def main():
             ui_events.put(("command", (name, arg)))
 
     def run_command(name: str, arg: str):
-        if name == "speed":
+        if name == "close":
+            close_pill()
+        elif name == "speed":
             if arg.startswith(("+", "-")):
                 change_speed(int(arg))
             elif arg:
@@ -698,6 +718,7 @@ def main():
                     icon.icon = IMG_SPEAKING if value else IMG_IDLE
                     if value:
                         cancel_hide()
+                        pill["dismissed"] = False  # a new read un-dismisses it
                         show_sentence("")  # drop the last read's leftovers
                     else:
                         pill["paused"] = False
