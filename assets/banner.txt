@@ -1,0 +1,22 @@
+ooooooooo.                                          ooooooooo.                   .o8        .o8
+`888   `Y88.                                        `888   `Y88.                "888       "888
+ 888   .d88' oooo    ooo  .oooo.   ooo. .oo.         888   .d88'  .ooooo.   .oooo888   .oooo888  oooo    ooo
+ 888ooo88P'   `88.  .8'  `P  )88b  `888P"Y88b        888ooo88P'  d88' `88b d88' `888  d88' `888   `88.  .8'
+ 888`88b.      `88..8'    .oP"888   888   888        888`88b.    888ooo888 888   888  888   888    `88..8'
+ 888  `88b.     `888'    d8(  888   888   888        888  `88b.  888    .o 888   888  888   888     `888'
+o888o  o888o     .8'     `Y888""8o o888o o888o      o888o  o888o `Y8bod8P' `Y8bod88P" `Y8bod88P"     .8'
+             .o..P'                                                                              .o..P'
+             `Y8P'                                                                               `Y8P'
+
+          ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                                    M U R M U R   (c) Ryan Reddy
+                     Sep-'26 :..... RELEASE.DATE .. LICENSE ......: PIRATE
+        PYTHON, ONNX, KOKORO :... PROGRAMLANG(S) .. Arch.TYPE ....: Windows tray
+          ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+                     Ctrl+Alt+M ......: read whatever text is selected
+                     Ctrl+Alt+Space ..: pause / resume
+                     Ctrl+Alt+S ......: stop
+                     Ctrl+Alt+B ......: read every new selection as you select it
+
+                     Runs offline. Nothing ever leaves this machine.

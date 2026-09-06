@@ -154,12 +154,16 @@ foreach ($model in $MODELS) {
 Step '4/4  Shortcuts'
 
 function New-Shortcut ($linkPath, $description) {
+    # Points at Murmur.cmd rather than pythonw so the banner shows on every
+    # launch, including at sign-in. The cmd closes itself; Murmur stays in the
+    # tray.
     $shell = New-Object -ComObject WScript.Shell
     $link = $shell.CreateShortcut($linkPath)
-    $link.TargetPath = $pythonw
-    $link.Arguments = '"' + (Join-Path $root 'murmur.py') + '"'
+    $link.TargetPath = Join-Path $root 'Murmur.cmd'
     $link.WorkingDirectory = $root
     $link.Description = $description
+    $icon = Join-Path $root 'assets\murmur.ico'
+    if (Test-Path $icon) { $link.IconLocation = $icon }
     $link.Save()
 }
 

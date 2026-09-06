@@ -62,6 +62,17 @@ questions, `-Autostart` answers the startup one with yes.
 That one download is the only time Murmur touches the network. After it, the
 machine can be offline forever.
 
+Afterwards, **`Murmur.cmd`** is the thing to double-click — it puts up the
+reddy.world banner, starts Murmur, and closes itself while Murmur stays in the
+tray. The desktop and startup shortcuts both point at it, so the banner shows on
+every sign-in. The banner lives in `assetsanner.txt` — the figlet is lifted
+verbatim from the [reddy.world](https://github.com/Ryan-Reddy/reddy.world)
+README, so edit that file directly if it should say something else.
+
+The banner is sized to fit a default console on its own — Windows Terminal
+ignores `mode con`, so anything taller than about 25 lines scrolls its own top
+off the screen.
+
 ## Run
 
 ```
