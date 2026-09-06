@@ -260,6 +260,18 @@ packaged build ships espeak-ng's DLL inside the exe.
 The model files are not redistributed here — the installer fetches them from the
 kokoro-onnx releases and checks them against a known SHA-256.
 
+## Starting up
+
+The window appears in about seven seconds and shows a percentage while the voice
+loads behind it, rather than nothing at all until everything is ready. The
+percentage is measured against how long the last load took on this machine, so
+it is honest after the first run and a guess before it.
+
+Getting there meant not importing the heavy things up front: `speaker` pulls in
+onnxruntime and numpy (about ten seconds off disk) and `keyboard` costs another
+three and a half. None is needed until there is a voice to drive, so they load
+in the background thread while the window is already up.
+
 ## Why it is built this way
 
 [DECISIONS.md](DECISIONS.md) records the non-obvious choices and the numbers

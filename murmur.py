@@ -12,6 +12,7 @@ Runs as a tray icon (green while speaking). Quit from the tray menu.
 """
 
 import ctypes
+import os
 import queue
 import socket
 import sys
@@ -20,14 +21,20 @@ import time
 import tkinter as tk
 from pathlib import Path
 
-import keyboard
-import pyperclip
 import pystray
 from PIL import Image, ImageDraw
 
 import winshutdown
 from mousehook import MouseButtons
-from speaker import Speaker
+
+# speaker, keyboard and pyperclip are NOT imported here on purpose. speaker
+# pulls in onnxruntime and numpy (about ten seconds off disk) and keyboard costs
+# another three and a half; none of them is needed until there is a voice to
+# drive. Loading them in the background thread lets the window appear in a
+# couple of seconds with a percentage on it, rather than the screen staying
+# empty until everything is ready.
+keyboard = None
+pyperclip = None
 
 # ------------------------------------------------------------------ config
 
@@ -165,6 +172,51 @@ def close_splash(text: str | None = None):
         pass
 
 
+class _Loading:
+    """Stands in for the Speaker while the model reads off disk.
+
+    The pill and tray are built in milliseconds but the voice takes tens of
+    seconds, and showing nothing for that long reads as a failure to start.
+    Holding the same attributes means every call site works untouched instead
+    of testing for readiness, and the real Speaker replaces it in place.
+    """
+
+    speed = 1.0
+    volume = 1.0
+    repeat = False
+
+    def speak(self, text): pass
+
+    def stop(self): pass
+
+    def toggle_pause(self): pass
+
+    def wait(self): pass
+
+
+def load_estimate() -> float:
+    """How long the last load took, so the percentage means something. The
+    first run on a machine has nothing to go on and guesses."""
+    try:
+        return max(2.0, float(_estimate_file().read_text()))
+    except Exception:
+        return 20.0
+
+
+def remember_load(seconds: float):
+    try:
+        path = _estimate_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{seconds:.1f}")
+    except Exception:
+        pass
+
+
+def _estimate_file() -> Path:
+    base = os.environ.get("LOCALAPPDATA") or str(ROOT)
+    return Path(base) / "Murmur" / "load-seconds"
+
+
 IMG_IDLE = make_icon_image((124, 92, 255, 255))     # purple
 IMG_SPEAKING = make_icon_image((52, 199, 123, 255))  # green
 IMG_PAUSED = make_icon_image((255, 170, 60, 255))    # amber
@@ -179,17 +231,37 @@ def main():
 
     print("Loading Kokoro model...")
     close_splash("loading the voice model…")
-    speaker = Speaker(
-        ROOT / "models" / "kokoro-v1.0.onnx",
-        ROOT / "models" / "voices-v1.0.bin",
-        blend=BLEND,
-        on_state=lambda speaking: ui_events.put(("state", speaking)),
-        on_text=lambda text: ui_events.put(("text", text)),
-        on_word=lambda index: ui_events.put(("word", index)),
-        on_pause=lambda paused: ui_events.put(("pause", paused)),
-    )
-    print("Model loaded.")
-    close_splash()
+    speaker = _Loading()
+
+    def load_voice():
+        """Build the real Speaker off the tkinter thread."""
+        nonlocal speaker
+        global keyboard, pyperclip
+        started = time.perf_counter()
+        try:
+            import keyboard
+            import pyperclip
+
+            from speaker import Speaker
+
+            voice = Speaker(
+                ROOT / "models" / "kokoro-v1.0.onnx",
+                ROOT / "models" / "voices-v1.0.bin",
+                blend=BLEND,
+                on_state=lambda speaking: ui_events.put(("state", speaking)),
+                on_text=lambda text: ui_events.put(("text", text)),
+                on_word=lambda index: ui_events.put(("word", index)),
+                on_pause=lambda paused: ui_events.put(("pause", paused)),
+            )
+            voice.speed, voice.volume = speaker.speed, speaker.volume
+            voice.repeat = speaker.repeat
+            # Warm the graph here rather than making the first real read pay it.
+            voice.kokoro.create("ready", voice=voice.voice, speed=1.0)
+        except Exception as exc:  # a missing or corrupt model, most likely
+            ui_events.put(("loadfailed", str(exc)))
+            return
+        speaker = voice
+        ui_events.put(("ready", time.perf_counter() - started))
 
     speed_index = SPEEDS.index(1.0)
 
@@ -668,7 +740,8 @@ def main():
         # in other processes; drop them before anything slower.
         speaker.stop()
         try:
-            keyboard.unhook_all()
+            if keyboard is not None:
+                keyboard.unhook_all()
         except Exception:
             pass
         try:
@@ -824,6 +897,10 @@ def main():
                     render_pill()
                     if not pill["speaking"]:
                         flash("🔁  Repeat on" if value else "🔁  Repeat off")
+                elif kind == "ready":
+                    on_ready(value)
+                elif kind == "loadfailed":
+                    on_load_failed(value)
                 elif kind == "command":
                     run_command(*value)
                 elif kind == "selectmode":
@@ -838,17 +915,48 @@ def main():
 
     start_text_server(speaker, control)
 
-    keyboard.add_hotkey(HOTKEY_READ, on_read)
-    keyboard.add_hotkey(HOTKEY_PAUSE, speaker.toggle_pause)
-    keyboard.add_hotkey(HOTKEY_STOP, speaker.stop)
-    keyboard.add_hotkey(HOTKEY_SELECTMODE, toggle_select_mode)
-    keyboard.add_hotkey(HOTKEY_FASTER, lambda: change_speed(+1))
-    keyboard.add_hotkey(HOTKEY_SLOWER, lambda: change_speed(-1))
+    loading = {"since": time.perf_counter(), "estimate": load_estimate(), "on": True}
 
+    def tick_loading():
+        """A percentage against how long the last load took. It is an estimate
+        and says so by never reaching 100 until the voice is actually there."""
+        if not loading["on"]:
+            return
+        elapsed = time.perf_counter() - loading["since"]
+        percent = min(99, int(elapsed / loading["estimate"] * 100))
+        set_reader(f"Warming up the voice\u2026   {percent}%")
+        place_pill()
+        root.after(200, tick_loading)
+
+    def on_ready(seconds: float):
+        loading["on"] = False
+        remember_load(seconds)
+        close_splash()
+        icon.title = f"Murmur — {HOTKEY_READ} reads your selection"
+        start_text_server(speaker, control)
+        # Bound late and through lambdas: at startup `speaker` is still the
+        # stand-in, and a bound method would keep pointing at it forever.
+        keyboard.add_hotkey(HOTKEY_READ, on_read)
+        keyboard.add_hotkey(HOTKEY_PAUSE, lambda: speaker.toggle_pause())
+        keyboard.add_hotkey(HOTKEY_STOP, lambda: speaker.stop())
+        keyboard.add_hotkey(HOTKEY_SELECTMODE, toggle_select_mode)
+        keyboard.add_hotkey(HOTKEY_FASTER, lambda: change_speed(+1))
+        keyboard.add_hotkey(HOTKEY_SLOWER, lambda: change_speed(-1))
+        print(f"Ready in {seconds:.1f}s. {HOTKEY_READ} = read selection.")
+        speaker.speak("Murmur is ready.")
+
+    def on_load_failed(message: str):
+        loading["on"] = False
+        close_splash()
+        set_reader(f"Could not load the voice: {message}")
+        place_pill()
+        print(f"Model failed to load: {message}")
+
+    icon.title = "Murmur — warming up…"
     icon.run_detached()
-    print(f"Ready. {HOTKEY_READ} = read selection, {HOTKEY_STOP} = stop.")
-    speaker.speak("Murmur is ready.")
+    threading.Thread(target=load_voice, daemon=True).start()
     root.after(80, poll_events)
+    tick_loading()
     root.mainloop()
 
 

@@ -85,6 +85,23 @@ with the sound — seconds late. The text is known the moment the hotkey is
 pressed. A separate `on_text` callback fires immediately: **0.7 ms**, and word
 indices count across the whole text rather than restarting per chunk.
 
+## The window comes up before the voice does
+
+Startup was silent for as long as it took: nothing on screen at all, then a
+tray icon. Measured, the wait was not mostly the model — `speaker` costs about
+ten seconds because it drags in onnxruntime and numpy, and `keyboard` another
+three and a half, all of it before `main()` even ran.
+
+Neither is needed until there is a voice to drive, so both load in the
+background thread. A stand-in object holds the same attributes as the Speaker
+while that happens, which means the pill and tray can be built and shown without
+every call site checking whether it is ready yet.
+
+The window is now up in about seven seconds with a percentage on it. The
+percentage is elapsed time against how long the last load took on this machine,
+recorded in `%LOCALAPPDATA%\Murmur`; it is honest after the first run and a
+guess before it, and never reaches 100 until the voice is actually there.
+
 ## The pill is placed inside the work area
 
 It was positioned at `screenheight - 150`, accounting for neither the taskbar nor
