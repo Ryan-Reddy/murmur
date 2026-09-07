@@ -218,6 +218,33 @@ if __name__ == "__main__":
     unittest.main(verbosity=2)
 
 
+class Names(unittest.TestCase):
+    """Every treatment is offered as somebody, so every one needs a name."""
+
+    def test_all_named(self):
+        import voices
+
+        self.assertEqual(set(voices.NAMES), set(voices.TREATMENTS))
+
+    def test_names_are_distinct(self):
+        import voices
+
+        labels = [label for _key, label in voices.catalogue()]
+        self.assertEqual(len(set(labels)), len(labels))
+
+    def test_catalogue_keeps_the_declared_order(self):
+        import voices
+
+        self.assertEqual([key for key, _ in voices.catalogue()],
+                         list(voices.TREATMENTS))
+
+    def test_an_unnamed_treatment_falls_back_to_its_key(self):
+        import voices
+
+        self.assertEqual(voices.label("nothing-by-that-name"),
+                         "nothing-by-that-name")
+
+
 class Treatments(unittest.TestCase):
     """The voice treatments. Cheap to check without a model: they are pure
     signal processing over an array."""

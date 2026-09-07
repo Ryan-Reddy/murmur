@@ -28,13 +28,20 @@ TRACK = "#7a63c0"
 SAMPLE = ("Here is the outlook. The tests have passed, and the branch is ready "
           "for review.")
 
-TREATMENTS = [
-    ("clean", "Clean — no treatment"),
-    ("bbc", "BBC — even and measured"),
-    ("veronica", "Radio Veronica — offshore AM"),
-    ("submarine", "Yellow Submarine — tape"),
-    ("agent", "Pocket talker — concealed recorder"),
-]
+
+def _treatments():
+    """The treatments as (key, label), from the one place that names them.
+
+    Imported here rather than at the top because voices pulls in numpy, and
+    murmur imports this module before there is a voice -- the whole point of
+    which is that the tray icon appears straight away.
+    """
+    try:
+        import voices
+
+        return voices.catalogue()
+    except Exception:
+        return [("clean", "Murmur — plain, no colour")]
 
 # A menu of 54 voices is taller than the screen, so it breaks into columns.
 MENU_COLUMN = 18
@@ -121,11 +128,12 @@ class _Window:
                   lambda row: self._slider(row, self.speed, 0.7, 2.0, 0.05,
                                            lambda v: f"{float(v):.2f}×"))
 
-        self._heading(body, "Treatment")
-        self._row(body, "Sounds like",
+        treatments = _treatments()
+        self._heading(body, "Sound")
+        self._row(body, "Read by",
                   lambda row: self._dropdown(row, self.treatment,
-                                             [t[0] for t in TREATMENTS],
-                                             dict(TREATMENTS)))
+                                             [t[0] for t in treatments],
+                                             dict(treatments)))
         self._row(body, "Sentence pause",
                   lambda row: self._slider(row, self.sentence_pause, 0.0, 0.40,
                                            0.01, lambda v: f"{float(v):.2f}s"))

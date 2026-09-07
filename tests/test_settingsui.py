@@ -132,10 +132,22 @@ class Window(unittest.TestCase):
 
     def test_choosing_from_a_menu_sets_the_value(self):
         """What a click actually runs, without a click."""
-        menu = self._menu_under("Sounds like")
+        import voices
+
+        menu = self._menu_under("Read by")
         labels = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1)]
-        menu.invoke(labels.index("BBC — even and measured"))
+        menu.invoke(labels.index(voices.label("bbc")))
         self.assertEqual(self.window.treatment.get(), "bbc")
+
+    def test_treatments_are_offered_by_name(self):
+        """They are characters, not signal chains: what shows in the menu is
+        who is reading, and the key underneath never changes."""
+        import voices
+
+        menu = self._menu_under("Read by")
+        labels = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1)]
+        self.assertEqual(labels, [voices.label(k) for k in voices.TREATMENTS])
+        self.assertIn("Auntie", labels[1])
 
     def test_the_voice_menu_breaks_into_columns(self):
         """54 voices in one column is taller than the screen."""

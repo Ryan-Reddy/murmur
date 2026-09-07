@@ -223,6 +223,31 @@ TREATMENTS = {
     "agent": _agent,
 }
 
+# The chains, as people. Nobody picks a voice by its compressor settings, and
+# "BBC — even and measured" describes the signal path rather than who is
+# talking. A name and where they are talking from is enough: you know what
+# Auntie sounds like before you have heard her.
+#
+# The keys never change -- they are what settings.json and ::voice use.
+NAMES = {
+    "clean": ("Murmur", "plain, no colour"),
+    "bbc": ("Auntie", "the shipping forecast"),
+    "veronica": ("Veronica", "offshore, after dark"),
+    "submarine": ("Abbey", "tape, wound a little slack"),
+    "agent": ("The Informant", "a recorder in a coat pocket"),
+}
+
+
+def label(name: str) -> str:
+    """How a treatment is offered to whoever is choosing one."""
+    who, where = NAMES.get(name, (name, ""))
+    return f"{who} — {where}" if where else who
+
+
+def catalogue() -> list[tuple[str, str]]:
+    """(key, label) for every treatment, in the order they should be shown."""
+    return [(key, label(key)) for key in TREATMENTS]
+
 
 # Below this many samples there is nothing a chain can usefully do, and the
 # FFTs start failing outright -- an empty chunk raised "Invalid number of FFT

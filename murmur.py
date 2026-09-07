@@ -1115,6 +1115,8 @@ def main():
             ui_events.put(("treatment", name))
         return handler
 
+    import voices  # numpy is already in memory by now; the speaker loaded it
+
     voice_menu = pystray.Menu(
         *[
             pystray.MenuItem(
@@ -1122,13 +1124,7 @@ def main():
                 checked=lambda item, name=name: speaker.treatment == name,
                 radio=True,
             )
-            for name, label in (
-                ("clean", "Clean — no treatment"),
-                ("bbc", "BBC — even and measured"),
-                ("veronica", "Radio Veronica — offshore AM"),
-                ("submarine", "Yellow Submarine — tape"),
-                ("agent", "Pocket talker — concealed recorder"),
-            )
+            for name, label in voices.catalogue()
         ]
     )
     menu = pystray.Menu(
@@ -1256,7 +1252,9 @@ def main():
                     set_volume(value)
                 elif kind == "treatment":
                     if not pill["speaking"]:
-                        flash(f"♪  Voice: {value}")
+                        import voices
+
+                        flash(f"♪  {voices.label(value)}")
                 elif kind == "repeat":
                     render_pill()
                     if not pill["speaking"]:
