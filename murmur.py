@@ -913,8 +913,9 @@ def main():
             pass
         root.after(80, poll_events)
 
-    start_text_server(speaker, control)
-
+    # The text server is started in on_ready, not here: started now it would
+    # capture the stand-in speaker, whose speak() does nothing, and hold the
+    # port so the real one could never bind.
     loading = {"since": time.perf_counter(), "estimate": load_estimate(), "on": True}
 
     def tick_loading():
