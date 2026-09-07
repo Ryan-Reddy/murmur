@@ -1228,6 +1228,7 @@ def main():
             ::select on | off | toggle  ::pin on | off | toggle
             ::repeat on | off | toggle  ::read  ::close  ::help  ::source
             ::voice clean | bbc | veronica | submarine | agent  ::settings
+            ::mix tape=0.6 hiss=0.2 | off      -- the ingredient sliders
             ::as <profile> followed by a newline and the text to speak
         """
         name, _, arg = line[2:].strip().partition(" ")
@@ -1254,6 +1255,28 @@ def main():
 
             if arg in voices.TREATMENTS:
                 set_treatment(arg)(None, None)
+        elif name == "mix":
+            # "::mix tape=0.6 hiss=0.2", or "::mix off" to hand the everyday
+            # voice back to whichever character it was set to.
+            import voices
+
+            profile = settings["profiles"].setdefault("default", {})
+            if arg in ("", "off", "none"):
+                speaker.recipe = {}
+                profile.pop("recipe", None)
+            else:
+                recipe = dict(speaker.recipe
+                              or voices.recipe_for(speaker.treatment))
+                for pair in arg.split():
+                    key, _, value = pair.partition("=")
+                    if key in voices.INGREDIENTS:
+                        try:
+                            recipe[key] = min(1.0, max(0.0, float(value)))
+                        except ValueError:
+                            pass
+                speaker.recipe = profile["recipe"] = recipe
+            save_settings(settings)
+            ui_events.put(("treatment", speaker.treatment))
         elif name == "help":
             wanted = {"on": True, "off": False}.get(arg, not pill["helping"])
             if wanted != pill["helping"]:
