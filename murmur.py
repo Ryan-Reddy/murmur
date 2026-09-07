@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+from ctypes import wintypes
 from pathlib import Path
 
 import pystray
@@ -44,6 +45,7 @@ HOTKEY_STOP = "ctrl+alt+s"
 HOTKEY_SELECTMODE = "ctrl+alt+b"  # B for browse: read every new selection
 HOTKEY_FASTER = "ctrl+alt+up"
 HOTKEY_SLOWER = "ctrl+alt+down"
+HOTKEY_SOURCE = "ctrl+alt+g"  # G for go back, to wherever the text came from
 
 # The voice: 70% bf_emma (British, clear) + 30% af_nicole (breathy rasp).
 BLEND = (("bf_emma", 0.7), ("af_nicole", 0.3))
@@ -114,6 +116,61 @@ def round_corners(window, radius: int = 16):
         ctypes.windll.user32.SetWindowRgn(hwnd, region, True)
     except Exception:
         pass
+
+
+_user32 = ctypes.WinDLL("user32", use_last_error=True)
+_user32.GetForegroundWindow.restype = wintypes.HWND
+_user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+_user32.BringWindowToTop.argtypes = [wintypes.HWND]
+_user32.IsWindow.argtypes = [wintypes.HWND]
+_user32.IsIconic.argtypes = [wintypes.HWND]
+_user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+_user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+_user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+_user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
+_user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+
+SW_RESTORE = 9
+
+
+def foreground_window():
+    """The window in front, and its title, or (0, "") if there isn't one."""
+    hwnd = _user32.GetForegroundWindow()
+    if not hwnd:
+        return 0, ""
+    title = ctypes.create_unicode_buffer(160)
+    _user32.GetWindowTextW(hwnd, title, 160)
+    return hwnd, title.value
+
+
+def raise_window(hwnd) -> bool:
+    """Bring a window back to the front.
+
+    Windows only lets the foreground process hand focus away, and Murmur is
+    deliberately never the foreground -- the pill carries WS_EX_NOACTIVATE so
+    clicking it does not steal focus. Attaching to the input queues of both the
+    current foreground thread and the target's is the way round that.
+    """
+    if not hwnd or not _user32.IsWindow(hwnd):
+        return False
+    current = _user32.GetForegroundWindow()
+    if current == hwnd:
+        return True
+    ours = ctypes.windll.kernel32.GetCurrentThreadId()
+    threads = {
+        _user32.GetWindowThreadProcessId(current, None),
+        _user32.GetWindowThreadProcessId(hwnd, None),
+    } - {ours, 0}
+    attached = [t for t in threads if _user32.AttachThreadInput(ours, t, True)]
+    try:
+        if _user32.IsIconic(hwnd):
+            _user32.ShowWindow(hwnd, SW_RESTORE)
+        _user32.BringWindowToTop(hwnd)
+        _user32.SetForegroundWindow(hwnd)
+    finally:
+        for thread in attached:
+            _user32.AttachThreadInput(ours, thread, False)
+    return _user32.GetForegroundWindow() == hwnd
 
 
 def already_running() -> bool:
@@ -326,11 +383,27 @@ def main():
         return handler
 
     def on_read():
+        remember_source()
         text = grab_selection()
         if text:
             speaker.speak(text)
         else:
             speaker.speak("I couldn't find any selected text.")
+
+    # Where the words came from, so there is a way back to it. Text arriving on
+    # the port has no source window, and the control greys out.
+    source = {"hwnd": 0, "title": ""}
+
+    def remember_source():
+        hwnd, title = foreground_window()
+        if hwnd:
+            source["hwnd"], source["title"] = hwnd, title
+
+    def go_to_source():
+        if raise_window(source["hwnd"]):
+            return
+        source["hwnd"] = 0  # it has gone; stop offering it
+        render_pill()
 
     # --- select mode: any completed selection (drag / double-click) is read ---
     select_mode = {"on": False}
@@ -358,6 +431,7 @@ def main():
     def read_selection_quietly():
         def go():
             time.sleep(0.15)  # let the app finalize the selection
+            remember_source()
             text = grab_selection()
             if text and text != last_spoken["text"]:
                 last_spoken["text"] = text
@@ -519,6 +593,11 @@ def main():
                                            volume_icon.config(fg=FG), render_volume()), add="+")
         widget.bind("<Leave>", lambda _e: (setattr(volume_bar, "hot", False),
                                            volume_icon.config(fg=MUTED), render_volume()), add="+")
+
+    source_btn = chip(controls, "↩", lambda: go_to_source(),
+                      tip=f"Go back to where the text came from  ({HOTKEY_SOURCE})",
+                      pad=8)
+    source_btn.pack(side="left", padx=(14, 0))
 
     repeat_btn = chip(controls, "↻", lambda: toggle_repeat(),
                       tip="Repeat: read it again until you stop it, with a "
@@ -729,6 +808,9 @@ def main():
         select_btn.config(fg=select_btn.rest)
         repeat_btn.rest = GREEN if speaker.repeat else MUTED
         repeat_btn.config(fg=repeat_btn.rest)
+        has_source = bool(source["hwnd"])
+        source_btn.rest = MUTED if has_source else EDGE
+        source_btn.config(fg=source_btn.rest, cursor="hand2" if has_source else "arrow")
         pin_btn.rest = AMBER if pill["pinned"] else MUTED
         pin_btn.config(fg=pin_btn.rest)
         # The one control most people want is brighter than the rest.
@@ -937,7 +1019,7 @@ def main():
 
             ::stop  ::pause  ::speed +1 | -1 | 1.25  ::volume 0.6
             ::select on | off | toggle  ::pin on | off | toggle
-            ::repeat on | off | toggle  ::read  ::close  ::help
+            ::repeat on | off | toggle  ::read  ::close  ::help  ::source
         """
         name, _, arg = line[2:].strip().partition(" ")
         arg = arg.strip()
@@ -954,6 +1036,8 @@ def main():
     def run_command(name: str, arg: str):
         if name == "close":
             close_pill()
+        elif name == "source":
+            go_to_source()
         elif name == "help":
             wanted = {"on": True, "off": False}.get(arg, not pill["helping"])
             if wanted != pill["helping"]:
@@ -1065,6 +1149,7 @@ def main():
         keyboard.add_hotkey(HOTKEY_SELECTMODE, toggle_select_mode)
         keyboard.add_hotkey(HOTKEY_FASTER, lambda: change_speed(+1))
         keyboard.add_hotkey(HOTKEY_SLOWER, lambda: change_speed(-1))
+        keyboard.add_hotkey(HOTKEY_SOURCE, go_to_source)
         print(f"Ready in {seconds:.1f}s. {HOTKEY_READ} = read selection.")
         speaker.speak("Murmur is ready.")
 

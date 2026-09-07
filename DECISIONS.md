@@ -170,6 +170,19 @@ they were the loudest thing on a row where volume is a secondary control.
 `⏸` and `▶` are rendered as emoji by Windows, each in a little rounded box of
 its own, so the play control is drawn with `❚❚` and `▸` instead.
 
+## Getting back to where the text came from
+
+Reading a selection means looking away from it, and the pill deliberately never
+takes focus, so there was no way back except finding the window yourself. It
+remembers whichever window was in front when the selection was grabbed, and ↩
+returns to it.
+
+Windows only lets the *foreground* process hand focus to another window, and
+Murmur is never the foreground -- the pill carries WS_EX_NOACTIVATE precisely so
+that clicking it does not steal focus from what you are reading. Attaching to the
+input queues of both the current foreground thread and the target's is the way
+round that; a bare SetForegroundWindow is ignored.
+
 ## The pill waits for you
 
 It used to vanish 0.6 s after a read, which is no use if you were reaching for

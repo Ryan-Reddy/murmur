@@ -16,6 +16,7 @@ Tweak the `BLEND` constant in `murmur.py` to taste.
 | `Ctrl+Alt+S` | Stop (or click the pill's ✕) |
 | `Ctrl+Alt+B` | Select mode: every new selection (drag / double-click) is read at once |
 | `Ctrl+Alt+Up` / `Down` | Faster / slower |
+| `Ctrl+Alt+G` | Go back to the window you read from |
 
 Select mode (also in the tray menu) is great for quick browsing; keep it off
 in terminals, where the copy it triggers (Ctrl+C) can mean "interrupt".
@@ -34,6 +35,7 @@ stumbling back to the top. Under it are the controls:
 | ⏸ / ▶ | pause / resume |
 | − `1.0×` + | speed (the readout also takes the mouse wheel) |
 | ♪ bars | volume — click or drag a bar, or use the wheel |
+| ↩ | go back to the window the text came from |
 | ↻ | repeat — read it again until stopped, green while on |
 | ⇱ select | select mode on/off, green while on |
 | ◉ | pin it open — it stops hiding itself, amber while pinned |
@@ -172,6 +174,7 @@ so another app — or a test — can drive Murmur without touching the keyboard:
 | `::pin on` / `off` / `toggle` | keep the pill on screen instead of letting it hide |
 | `::repeat on` / `off` / `toggle` | read it again until stopped |
 | `::close` | dismiss the pill |
+| `::source` | go back to the window the text came from |
 | `::help on` / `off` / `toggle` | show what everything does |
 
 ## Speak Claude Code notifications
