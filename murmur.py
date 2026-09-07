@@ -26,6 +26,7 @@ from pathlib import Path
 import pystray
 from PIL import Image, ImageDraw
 
+import settingsui
 import winshutdown
 from mousehook import MouseButtons
 
@@ -1080,6 +1081,27 @@ def main():
             for level in (0.25, 0.5, 0.75, 1.0)
         ]
     )
+
+    def open_settings():
+        """The voices window. It takes focus, unlike the pill -- it has
+        dropdowns and sliders to drive."""
+        def applied(name, profile):
+            if name == "default":
+                speaker.treatment = profile.get("treatment", "clean")
+                speaker.speed = profile.get("speed", speaker.speed)
+                speaker.sentence_pause = profile.get("sentence_pause", 0.25)
+                speaker.clause_pause = profile.get("clause_pause", 0.10)
+                blend = profile.get("blend")
+                if blend:
+                    try:
+                        speaker.voice = speaker.voice_for(
+                            [(n, float(w)) for n, w in blend])
+                    except Exception:
+                        pass  # a half-typed blend should not lose the voice
+            ui_events.put(("treatment", profile.get("treatment", "clean")))
+
+        settingsui.open_window(root, settings, save_settings, speaker, applied)
+
     def set_treatment(name):
         def handler(_icon, _item):
             speaker.treatment = name
@@ -1116,6 +1138,7 @@ def main():
         pystray.MenuItem("Speed", speed_menu),
         pystray.MenuItem("Volume", volume_menu),
         pystray.MenuItem("Voice", voice_menu),
+        pystray.MenuItem("Voices and settings…", lambda icon, item: root.after(0, open_settings)),
         pystray.MenuItem(
             f"Select mode ({HOTKEY_SELECTMODE}): read on select",
             lambda icon, item: toggle_select_mode(),
@@ -1143,7 +1166,7 @@ def main():
             ::stop  ::pause  ::speed +1 | -1 | 1.25  ::volume 0.6
             ::select on | off | toggle  ::pin on | off | toggle
             ::repeat on | off | toggle  ::read  ::close  ::help  ::source
-            ::voice clean | bbc | veronica | submarine | agent
+            ::voice clean | bbc | veronica | submarine | agent  ::settings
             ::as <profile> followed by a newline and the text to speak
         """
         name, _, arg = line[2:].strip().partition(" ")
@@ -1163,6 +1186,8 @@ def main():
             close_pill()
         elif name == "source":
             go_to_source()
+        elif name == "settings":
+            open_settings()
         elif name == "voice":
             import voices
 
