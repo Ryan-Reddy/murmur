@@ -28,20 +28,25 @@ TRACK = "#7a63c0"
 SAMPLE = ("Here is the outlook. The tests have passed, and the branch is ready "
           "for review.")
 
+# A profile is a job. This is the job description, so the dropdown is a list
+# of posts rather than a list of words.
+JOBS = {
+    "default": "Everything you ask to be read. Hired for the long haul.",
+    "claude": "Claude Code, interrupting. Hired to land without alarming you.",
+    "clock": "The time, and anything else on a schedule. Hired to be ignorable.",
+}
+FREELANCE = "Yours. Anything that sends ::as {name} gets read in this."
+
 
 def _treatments():
-    """The treatments as (key, label), from the one place that names them.
-
-    Imported here rather than at the top because voices pulls in numpy, and
-    murmur imports this module before there is a voice -- the whole point of
-    which is that the tray icon appears straight away.
-    """
+    """The treatments as (key, label), from the one place that names them."""
     try:
-        import voices
+        import characters
 
-        return voices.catalogue()
+        return characters.catalogue()
     except Exception:
         return [("clean", "Murmur — plain, no colour")]
+
 
 # A menu of 54 voices is taller than the screen, so it breaks into columns.
 MENU_COLUMN = 18
@@ -111,19 +116,23 @@ class _Window:
         self.sentence_pause = tk.DoubleVar(value=0.25)
         self.clause_pause = tk.DoubleVar(value=0.10)
 
-        names = self._voice_names()
+        singers = self._voice_names()
+        keys = [key for key, _ in singers]
+        said = dict(singers)
 
         self._heading(body, "Profile")
-        self._row(body, "Name", self._profile_picker)
+        self._row(body, "Job", self._profile_picker)
+        self.job = tk.Label(body, text="", bg=BG, fg=MUTED, anchor="w",
+                            font=("Segoe UI", 9), wraplength=380, justify="left")
+        self.job.pack(fill="x", pady=(2, 0))
 
         self._heading(body, "Voice")
         self._row(body, "First",
-                  lambda row: self._dropdown(row, self.voice_a, names))
+                  lambda row: self._dropdown(row, self.voice_a, keys, said))
         self._row(body, "Second",
-                  lambda row: self._dropdown(row, self.voice_b, names))
+                  lambda row: self._dropdown(row, self.voice_b, keys, said))
         self._row(body, "Mix",
-                  lambda row: self._slider(row, self.mix, 0, 100, 1,
-                                           lambda v: f"{int(float(v))}% first"))
+                  lambda row: self._slider(row, self.mix, 0, 100, 1, self._mix))
         self._row(body, "Speed",
                   lambda row: self._slider(row, self.speed, 0.7, 2.0, 0.05,
                                            lambda v: f"{float(v):.2f}×"))
@@ -152,6 +161,11 @@ class _Window:
         self._button(buttons, "Save", self.apply, primary=True).pack(
             side="right", padx=(0, 8))
 
+        # The mix readout names the two voices, so it is stale the moment
+        # either of them changes. Re-setting the value fires its own trace.
+        for chooser in (self.voice_a, self.voice_b):
+            chooser.trace_add("write", lambda *_: self.mix.set(self.mix.get()))
+
         self.load_profile("default")
         self.top.update_idletasks()
         self._centre(root)
@@ -160,12 +174,15 @@ class _Window:
     # -- construction helpers ------------------------------------------------
 
     def _voice_names(self):
-        """Every voice the model ships, or a single placeholder while it is
-        still loading -- the window can be opened before the voice exists."""
+        """Every voice the model ships, as (key, label) -- the ones we have
+        actually listened to first. A single placeholder while it is still
+        loading, since the window can be opened before the voice exists."""
         try:
-            return sorted(self.speaker.kokoro.get_voices())
+            import characters
+
+            return characters.singers(self.speaker.kokoro.get_voices())
         except Exception:
-            return ["(still loading)"]
+            return [("(still loading)", "(still loading)")]
 
     def _heading(self, parent, text):
         tk.Label(parent, text=text.upper(), bg=BG, fg=MUTED, anchor="w",
@@ -216,6 +233,21 @@ class _Window:
             "write", lambda *_: shown.set(labels.get(variable.get(),
                                                      variable.get())))
         return menu
+
+    def _mix(self, value) -> str:
+        """The mix, said as the two people it is mixing.
+
+        "70% first" tells you nothing when the two dropdowns above already say
+        first and second. Who is 70% of it is the useful part.
+        """
+        first = int(float(value))
+        who = self.voice_a.get().split("_", 1)[-1].title()
+        other = self.voice_b.get().split("_", 1)[-1].title()
+        if first >= 99:
+            return f"all {who}"
+        if first <= 1:
+            return f"all {other}"
+        return f"{first}% {who}"
 
     def _slider(self, parent, variable, low, high, step, fmt):
         frame = tk.Frame(parent, bg=BG)
@@ -285,6 +317,7 @@ class _Window:
             self.sentence_pause.set(profile.get("sentence_pause", 0.25))
             self.clause_pause.set(profile.get("clause_pause", 0.10))
             self.profile_name.set(name)
+            self.job.config(text=JOBS.get(name) or FREELANCE.format(name=name))
             self.note.config(
                 text=f"Editing “{name}”. Nothing changes until you save.")
         finally:

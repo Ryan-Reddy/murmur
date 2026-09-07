@@ -121,14 +121,49 @@ class Window(unittest.TestCase):
     # -- the controls --------------------------------------------------------
 
     def test_every_voice_is_offered(self):
-        self.assertEqual(self.window._voice_names(),
-                         ["af_nicole", "am_michael", "bf_emma"])
+        keys = [key for key, _ in self.window._voice_names()]
+        self.assertEqual(sorted(keys), ["af_nicole", "am_michael", "bf_emma"])
+
+    def test_voices_are_said_rather_than_spelled(self):
+        """bf_emma tells you nothing you did not have to learn first."""
+        said = dict(self.window._voice_names())
+        self.assertEqual(said["bf_emma"], "Emma — British, higher, clear and close")
+        self.assertEqual(said["am_michael"], "Michael — American, lower, plain, unhurried")
+
+    def test_the_ones_we_have_listened_to_come_first(self):
+        import voices
+
+        keys = [key for key, _ in
+                voices.singers(["zm_yunxi", "bf_emma", "af_aoede", "af_nicole"])]
+        self.assertEqual(keys[:2], ["bf_emma", "af_nicole"])
+        self.assertEqual(keys[2:], ["af_aoede", "zm_yunxi"])
+
+    def test_an_undescribed_voice_still_says_where_it_is_from(self):
+        import voices
+
+        self.assertEqual(voices.voice_label("zm_yunxi"), "Yunxi — Mandarin, lower")
+        self.assertEqual(voices.voice_label("jf_alpha"), "Alpha — Japanese, higher")
 
     def test_a_voice_that_is_not_loaded_yet_does_not_stop_the_window(self):
         window = settingsui._Window(
             _root, settings(), self.save, object(), self.apply)
         self.addCleanup(window.top.destroy)
-        self.assertEqual(window._voice_names(), ["(still loading)"])
+        self.assertEqual(window._voice_names(), [("(still loading)", "(still loading)")])
+
+    def test_the_mix_names_who_is_doing_the_mixing(self):
+        self.window.voice_a.set("bf_emma")
+        self.window.voice_b.set("af_nicole")
+        self.assertEqual(self.window._mix(70), "70% Emma")
+        self.assertEqual(self.window._mix(100), "all Emma")
+        self.assertEqual(self.window._mix(0), "all Nicole")
+
+    def test_each_profile_says_what_it_is_for(self):
+        self.window.profile_name.set("claude")
+        self.assertIn("interrupting", self.window.job.cget("text"))
+        self.window.settings["profiles"]["bedtime"] = dict(
+            self.settings["profiles"]["default"])
+        self.window.load_profile("bedtime")
+        self.assertIn("::as bedtime", self.window.job.cget("text"))
 
     def test_choosing_from_a_menu_sets_the_value(self):
         """What a click actually runs, without a click."""

@@ -89,6 +89,7 @@ FADE_STEP = 0.34        # eased: each frame closes a third of what is left
 # text here and it plays through the same pill + hotkey controls.
 MURMUR_PORT = 52719
 
+
 def _profile(treatment, speed=0.95, sentence=0.10, clause=0.03) -> dict:
     """One profile, with a blend of its own.
 
@@ -105,7 +106,7 @@ def _profile(treatment, speed=0.95, sentence=0.10, clause=0.03) -> dict:
 
 
 # A profile is a job, not a character: what the voice is *for*. Which of the
-# characters in voices.NAMES reads it is one of the dials inside, and yours to
+# characters in characters.NAMES reads it is one of the dials inside, and yours to
 # change. Anything sending text asks for a profile by name, so a notification
 # from Claude and a paragraph you asked for are told apart by ear rather than
 # by one of them being louder.
@@ -167,6 +168,32 @@ else:
     ROOT = Path(__file__).parent
 
 
+_user32 = ctypes.WinDLL("user32", use_last_error=True)
+_user32.GetForegroundWindow.restype = wintypes.HWND
+_user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+_user32.BringWindowToTop.argtypes = [wintypes.HWND]
+_user32.IsWindow.argtypes = [wintypes.HWND]
+_user32.IsIconic.argtypes = [wintypes.HWND]
+_user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+_user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+_user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+_user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
+_user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+# Handles are pointer-sized. An undeclared restype is a C int, so on 64-bit
+# every one of these comes back with its top half cut off -- and only where the
+# loader happened to place things high, which is what made the shutdown
+# listener work on about half its launches.
+_user32.GetParent.restype = wintypes.HWND
+_user32.GetParent.argtypes = [wintypes.HWND]
+_user32.SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN, wintypes.BOOL]
+_user32.SetWindowRgn.restype = ctypes.c_int
+
+_gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+_gdi32.CreateRoundRectRgn.restype = wintypes.HRGN
+_gdi32.CreateRoundRectRgn.argtypes = [ctypes.c_int] * 6
+_gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+
+
 _rounded_at = {}
 
 
@@ -190,26 +217,18 @@ def round_corners(window, radius: int = 16):
         if _rounded_at.get(key) == (width, height):
             return
         _rounded_at[key] = (width, height)
-        hwnd = ctypes.windll.user32.GetParent(window.winfo_id()) or window.winfo_id()
-        region = ctypes.windll.gdi32.CreateRoundRectRgn(
+        hwnd = _user32.GetParent(window.winfo_id()) or window.winfo_id()
+        region = _gdi32.CreateRoundRectRgn(
             0, 0, width + 1, height + 1, radius * 2, radius * 2
         )
-        ctypes.windll.user32.SetWindowRgn(hwnd, region, True)
+        # Windows takes ownership of the region only if this succeeds. On
+        # failure it is ours to free, and this runs on every resize -- a leaked
+        # region per call runs a process out of GDI handles eventually.
+        if not _user32.SetWindowRgn(hwnd, region, True):
+            _gdi32.DeleteObject(region)
     except Exception:
         pass
 
-
-_user32 = ctypes.WinDLL("user32", use_last_error=True)
-_user32.GetForegroundWindow.restype = wintypes.HWND
-_user32.SetForegroundWindow.argtypes = [wintypes.HWND]
-_user32.BringWindowToTop.argtypes = [wintypes.HWND]
-_user32.IsWindow.argtypes = [wintypes.HWND]
-_user32.IsIconic.argtypes = [wintypes.HWND]
-_user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
-_user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
-_user32.GetWindowThreadProcessId.restype = wintypes.DWORD
-_user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
-_user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
 
 SW_RESTORE = 9
 
@@ -1128,7 +1147,7 @@ def main():
             ui_events.put(("treatment", name))
         return handler
 
-    import voices  # numpy is already in memory by now; the speaker loaded it
+    import characters
 
     voice_menu = pystray.Menu(
         *[
@@ -1137,7 +1156,7 @@ def main():
                 checked=lambda item, name=name: speaker.treatment == name,
                 radio=True,
             )
-            for name, label in voices.catalogue()
+            for name, label in characters.catalogue()
         ]
     )
     menu = pystray.Menu(
@@ -1147,7 +1166,12 @@ def main():
         pystray.MenuItem("Speed", speed_menu),
         pystray.MenuItem("Volume", volume_menu),
         pystray.MenuItem("Voice", voice_menu),
-        pystray.MenuItem("Voices and settings…", lambda icon, item: root.after(0, open_settings)),
+        # Through the queue, not root.after: the menu runs on pystray's own
+        # thread, and tkinter called from a thread that is not the one running
+        # the mainloop is a crash waiting for the wrong moment.
+        pystray.MenuItem(
+            "Voices and settings…",
+            lambda icon, item: ui_events.put(("command", ("settings", "")))),
         pystray.MenuItem(
             f"Select mode ({HOTKEY_SELECTMODE}): read on select",
             lambda icon, item: toggle_select_mode(),
@@ -1265,9 +1289,9 @@ def main():
                     set_volume(value)
                 elif kind == "treatment":
                     if not pill["speaking"]:
-                        import voices
+                        import characters
 
-                        flash(f"♪  {voices.label(value)}")
+                        flash(f"♪  {characters.label(value)}")
                 elif kind == "repeat":
                     render_pill()
                     if not pill["speaking"]:
