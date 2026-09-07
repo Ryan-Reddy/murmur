@@ -593,10 +593,16 @@ def main():
     shell = tk.Frame(rim, bg=BG)
     shell.pack(fill="both", expand=True, padx=1, pady=1)
 
+    # Window chrome goes where window chrome goes: pin and close, top right.
+    # They are not transport controls, and sitting them in the same strip as
+    # play is most of why the strip read as an undifferentiated row of glyphs.
+    chrome = tk.Frame(shell, bg=BG)
+    chrome.pack(fill="x", padx=12, pady=(4, 0))
+
     # The sentence being spoken, with the current word lit as it is reached.
     reader = tk.Text(
         shell, height=3, width=52, wrap="word", relief="flat", cursor="arrow",
-        bg=BG, fg=MUTED, font=("Segoe UI", 11), padx=20, pady=(14),
+        bg=BG, fg=MUTED, font=("Segoe UI", 11), padx=20, pady=(4),
         highlightthickness=0, borderwidth=0, spacing1=1, spacing3=7,
         takefocus=0,
     )
@@ -613,8 +619,20 @@ def main():
     progress = tk.Canvas(shell, height=2, bg=BG, highlightthickness=0)
     progress.pack(fill="x", padx=20, pady=(0, 0))
 
+    # Three columns, the outer two weighted equally and made uniform, so the
+    # transport in the middle is centred on the pill rather than on whatever
+    # the two sides happen to add up to.
     controls = tk.Frame(shell, bg=BG)
-    controls.pack(fill="x", padx=14, pady=(2, 10))
+    controls.pack(fill="x", padx=14, pady=(2, 8))
+    controls.grid_columnconfigure(0, weight=1, uniform="flank")
+    controls.grid_columnconfigure(1, weight=0)
+    controls.grid_columnconfigure(2, weight=1, uniform="flank")
+    speed_group = tk.Frame(controls, bg=BG)
+    speed_group.grid(row=0, column=0, sticky="w")
+    transport = tk.Frame(controls, bg=BG)
+    transport.grid(row=0, column=1)
+    modes = tk.Frame(controls, bg=BG)
+    modes.grid(row=0, column=2, sticky="e")
 
     def touched():
         """Any deliberate interaction keeps the pill up for a while, so a second
@@ -685,31 +703,46 @@ def main():
         widget.bind("<Leave>", lambda _e: widget.config(fg=widget.rest))
         return explain(widget, tip)
 
-    play_btn = chip(controls, "\u275a\u275a", lambda: speaker.toggle_pause(),
+    # -- centre: the transport. Play is what people reach for, so it is the
+    # biggest thing on the row and sits in the middle, which is where every
+    # player anyone has ever used puts it.
+    repeat_btn = chip(transport, "↻", lambda: toggle_repeat(),
+                      tip="Repeat: read it again until you stop it, with a "
+                          "chime between", pad=8)
+    repeat_btn.pack(side="left")
+
+    play_btn = chip(transport, "❚❚", lambda: speaker.toggle_pause(),
                     tip=f"Pause or resume  ({HOTKEY_PAUSE}).  "
                         "Clicking the text does the same.",
-                    font=("Segoe UI", 12), pad=8)
-    play_btn.pack(side="left")
+                    font=("Segoe UI", 15), pad=10)
+    play_btn.pack(side="left", padx=2)
 
-    slower_btn = chip(controls, "−", lambda: change_speed(-1),
+    source_btn = chip(transport, "↩", lambda: go_to_source(),
+                      tip=f"Go back to where the text came from  ({HOTKEY_SOURCE})",
+                      pad=8)
+    source_btn.pack(side="left")
+
+    # -- left: speed
+    slower_btn = chip(speed_group, "−", lambda: change_speed(-1),
                       tip=f"Slower  ({HOTKEY_SLOWER})", pad=9)
-    slower_btn.pack(side="left", padx=(14, 0))
-    speed_hud = tk.Label(controls, text="1.0×", fg=CONTROL_HOT, bg=BG,
+    slower_btn.pack(side="left")
+    speed_hud = tk.Label(speed_group, text="1.0×", fg=CONTROL_HOT, bg=BG,
                          font=("Segoe UI", 10), padx=2, pady=3, width=5)
     speed_hud.pack(side="left")
     explain(speed_hud, "Speed. Click to go back to 1.0x, or roll the wheel.")
-    faster_btn = chip(controls, "+", lambda: change_speed(+1),
+    faster_btn = chip(speed_group, "+", lambda: change_speed(+1),
                       tip=f"Faster  ({HOTKEY_FASTER})", pad=9)
     faster_btn.pack(side="left")
 
-    # Plain BMP symbols rather than emoji: Segoe UI has no glyph for 🔊, 🔁 or
-    # 📌, so they drew as empty boxes on the control row.
-    volume_icon = tk.Label(controls, text="♪", fg=CONTROL, bg=BG,
+    # -- right: volume, then the two modes
+    # Plain BMP symbols rather than emoji: Segoe UI has no glyph for the
+    # speaker, repeat or pin emoji, so they drew as empty boxes.
+    volume_icon = tk.Label(modes, text="♪", fg=CONTROL, bg=BG,
                            font=("Segoe UI", 11), padx=6, pady=3)
-    volume_icon.pack(side="left", padx=(14, 0))
+    volume_icon.pack(side="left")
     explain(volume_icon, "Click to mute or unmute")
     BARS = 7
-    volume_bar = tk.Canvas(controls, width=BARS * 8, height=16, bg=BG,
+    volume_bar = tk.Canvas(modes, width=BARS * 8, height=16, bg=BG,
                            highlightthickness=0, cursor="hand2")
     volume_bar.hot = False
     volume_bar.pack(side="left", pady=3)
@@ -720,31 +753,23 @@ def main():
         widget.bind("<Leave>", lambda _e: (setattr(volume_bar, "hot", False),
                                            volume_icon.config(fg=CONTROL), render_volume()), add="+")
 
-    source_btn = chip(controls, "↩", lambda: go_to_source(),
-                      tip=f"Go back to where the text came from  ({HOTKEY_SOURCE})",
-                      pad=8)
-    source_btn.pack(side="left", padx=(14, 0))
-
-    repeat_btn = chip(controls, "↻", lambda: toggle_repeat(),
-                      tip="Repeat: read it again until you stop it, with a "
-                          "chime between", pad=8)
-    repeat_btn.pack(side="left", padx=(14, 0))
-
-    select_btn = chip(controls, "⇱ select", lambda: toggle_select_mode(),
+    select_btn = chip(modes, "⇱ select", lambda: toggle_select_mode(),
                       tip=f"Select mode  ({HOTKEY_SELECTMODE}): read every new "
                           "selection as you make it. Leave it off in terminals.",
                       pad=8)
-    select_btn.pack(side="left", padx=(14, 0))
+    select_btn.pack(side="left", padx=(12, 0))
 
-    close_btn = chip(controls, "✕", close_pill,
-                     tip="Stop and put this away",
-                     font=("Segoe UI", 10, "bold"), pad=8)
-    close_btn.pack(side="right")
-    help_btn = chip(controls, "?", lambda: toggle_help(),
+    help_btn = chip(modes, "?", lambda: toggle_help(),
                     tip="What everything does", pad=8)
-    help_btn.pack(side="right")
-    pin_btn = chip(controls, "◉", lambda: toggle_pin(),
-                   tip="Keep this on screen instead of letting it hide", pad=8)
+    help_btn.pack(side="left")
+
+    # -- and the chrome, top right, where a window's chrome belongs
+    close_btn = chip(chrome, "✕", close_pill,
+                     tip="Stop and put this away",
+                     font=("Segoe UI", 10, "bold"), pad=7)
+    close_btn.pack(side="right")
+    pin_btn = chip(chrome, "◉", lambda: toggle_pin(),
+                   tip="Keep this on screen instead of letting it hide", pad=7)
     pin_btn.pack(side="right")
 
     pill = {"sentence": "", "paused": False, "speaking": False,
@@ -915,7 +940,10 @@ def main():
             speaker.toggle_pause()
         return "break"
 
-    for widget in (shell, controls):
+    # Every bit of empty pill is draggable, which now means the group frames
+    # too -- the gaps between the three columns are the biggest empty areas
+    # on the thing.
+    for widget in (shell, chrome, controls, speed_group, transport, modes):
         widget.bind("<Button-1>", pill_press)
         widget.bind("<B1-Motion>", pill_drag)
         widget.bind("<ButtonRelease-1>", pill_drop)
