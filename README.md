@@ -30,16 +30,32 @@ Repeat reads it again until you stop it, with a soft chime and a beat of quiet
 between passes so a repeat is obviously a repeat rather than the reader
 stumbling back to the top. Under it are the controls:
 
+```
+┌────────────────────────────────────────────────┐
+│                                         ◉   ✕  │
+│  the text, with the current word lit           │
+│  ─────────────                                 │
+│   −  1.0×  +       ↻  ⏸  ↩       ♪▁▂▃  ⇱  ?   │
+│      speed         transport      volume/modes │
+└────────────────────────────────────────────────┘
+```
+
+Laid out the way a player is laid out. Pin and close are window chrome, so
+they sit top right. Pause is the thing you reach for, so it is the largest
+control and it is dead centre — a three-column grid with the outer two
+weighted equally, so the transport is centred on the pill rather than on
+whatever the two sides happen to add up to.
+
 | Control | Does |
 |---|---|
-| ⏸ / ▶ | pause / resume |
+| ⏸ / ▶ | pause / resume — centre, and the biggest thing on the row |
+| ↻ | repeat — read it again until stopped, green while on |
+| ↩ | go back to the window the text came from |
 | − `1.0×` + | speed (the readout also takes the mouse wheel) |
 | ♪ bars | volume — click or drag a bar, or use the wheel |
-| ↩ | go back to the window the text came from |
-| ↻ | repeat — read it again until stopped, green while on |
 | ⇱ select | select mode on/off, green while on |
-| ◉ | pin it open — it stops hiding itself, amber while pinned |
 | ? | what everything does |
+| ◉ | pin it open — it stops hiding itself, amber while pinned |
 | ✕ | dismiss — stops the reading and puts the pill away |
 
 Hovering any control explains it in the text area, and **?** lists the lot.
@@ -277,6 +293,27 @@ Optional `on_state(speaking)` / `on_sentence(text)` / `on_word(index)` callbacks
 give you progress feedback — `on_word` is what drives the read-along highlight —
 and `blend=` / `speed=` / `volume=` / `threads=` customize the rest.
 
+`voices.py` is usable on its own, and needs nothing but numpy:
+
+```python
+import voices
+
+audio = voices.treat("bbc", audio, 24000)                    # a character
+audio = voices.cook(audio, 24000, {"tape": 0.6, "hiss": .2}) # or a mix
+```
+
+The modules split along what they cost to import, because the tray icon has to
+appear before the model has loaded:
+
+| | |
+|---|---|
+| `murmur.py` | the tray, the pill, the hotkeys, the port |
+| `speaker.py` | synthesis and playback — no UI |
+| `voices.py` | the treatment chains and the mixer — numpy, ~700 ms |
+| `characters.py` | who the voices are: names only, no imports, ~3 ms |
+| `settingsui.py` | the settings window |
+| `mousehook.py` · `winshutdown.py` | the two bits of Win32 |
+
 ## Voice auditions
 
 `audition.py` / `audition2.py` regenerate the voice comparison samples in `samples/`.
@@ -355,9 +392,67 @@ the settings window under **Read by**, or per message over the port.
 
 **Tray → Voices and settings…** (or `::settings`) opens a window with every
 dial a profile holds: the two voices and their mix, the speed, who reads it,
-and both pauses. **Hear it** speaks a sample in whatever the form currently
-says, saved or not — nothing touches the running voice until you press
-**Save**, so a bad guess costs nothing.
+the mixer below, and both pauses. **Hear it** speaks a sample in whatever the
+form currently says, saved or not — nothing touches the running voice until
+you press **Save**, so a bad guess costs nothing.
+
+Voices are offered by what they are rather than by their key, since `bf_emma`
+is something you have to learn before it tells you anything:
+
+> **Emma** — British, higher, clear and close
+> **Nicole** — American, higher, breathy, with a rasp
+> **Yunxi** — Mandarin, lower
+
+Accent and range are decoded from the key. The character notes exist only for
+the six voices that have actually been listened to — the other 48 get their
+accent and range, which is true, rather than a description someone made up.
+`samples/` holds a dozen rendered auditions, and `audition.py` renders more.
+
+### The mixer
+
+The five characters are not five things. They are five points in one space,
+and the space between them is reachable — a lot of transistor, a twist of spy,
+less tape. Eight ingredients, each 0 to 100%:
+
+| | |
+|---|---|
+| **narrow** | how much of the band survives — radio, then telephone |
+| **transistor** | driven until it warms, then until it grits |
+| **squash** | the limiter; high is flat, loud, and runs on |
+| **tape** | wow, flutter, and a second pass wandering behind the first |
+| **spy** | the honk of a tiny earpiece, and an AGC chasing a whisper |
+| **fade** | a signal breathing, the way skywave does |
+| **room** | a short tail, so the end of a word laps the next |
+| **hiss** | the floor under everything |
+
+Choosing a character loads its recipe into the sliders. Where each character
+sits was **fitted, not guessed**: a coordinate search against that character's
+own output, scored on the long-term spectrum across fourteen bands plus the
+loudness envelope over time.
+
+The first fit was wrong in a useful way. Left free, it put tape at 0.29 and
+fade at 0.23 on the BBC chain, because both moved the spectrum the right way —
+and wow and flutter on a newsreader is exactly what that metric cannot see and
+the ear cannot miss. Refitted over only the ingredients each character
+actually contains. How close each lands, RMS over those bands:
+
+| Abbey | Auntie | Veronica | The Informant |
+|---|---|---|---|
+| 0.95 dB | 1.50 dB | 1.89 dB | **3.72 dB** |
+
+The Informant is not close enough to pass off as the same thing. So **the
+named characters still run their own hand-built chains, exactly as built**, and
+a recipe is only where the sliders start from. Choose a name and it sounds as
+it always did; move a dial and the mixer takes over. A profile that has been
+mixed stores a `recipe` alongside its `treatment`:
+
+```json
+"default": {
+  "treatment": "agent",
+  "recipe": {"narrow": 0.45, "transistor": 1.0, "squash": 0.55,
+             "tape": 0.55, "spy": 0.25, "fade": 0.0, "room": 0.35, "hiss": 0.3}
+}
+```
 
 ### Profiles
 
