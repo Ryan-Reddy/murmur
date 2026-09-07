@@ -175,6 +175,8 @@ so another app — or a test — can drive Murmur without touching the keyboard:
 | `::repeat on` / `off` / `toggle` | read it again until stopped |
 | `::close` | dismiss the pill |
 | `::source` | go back to the window the text came from |
+| `::voice clean` / `bbc` / `veronica` / `submarine` / `agent` | the everyday voice treatment |
+| `::as <profile>` + newline + text | speak that text in a named voice |
 | `::help on` / `off` / `toggle` | show what everything does |
 
 ## Speak Claude Code notifications
@@ -330,3 +332,33 @@ stop. Anything needing the model skips itself when `models\` is absent.
 `bench.py` measures synthesis cost across thread counts, time to first word,
 gaps and idle draw, and writes [BENCHMARKS.md](BENCHMARKS.md). It speaks aloud
 while running, because measuring the gaps means actually playing the audio.
+
+## Voices
+
+Kokoro gives a clean studio voice. A *treatment* puts it through something, so
+a notification and a paragraph you asked for are told apart by ear without
+either having to be louder. Pick one from the tray under **Voice**, or per
+message over the port.
+
+| | |
+|---|---|
+| `clean` | untouched |
+| `bbc` | the station: even and measured, compression doing the work |
+| `veronica` | offshore AM — narrower, limited far harder because pirates competed on loudness, with a skywave fade and a noise floor |
+| `submarine` | not broadcast at all, **tape**: wow and flutter, double tracking, asymmetric saturation, a plate behind it |
+| `agent` | a concealed recorder — narrow at both ends, honking where a tiny earpiece resonates, an AGC brutal enough to catch a whisper across a room |
+
+Named profiles live in `%LOCALAPPDATA%\Murmur\settings.json` — each sets a
+voice blend, speed, treatment and how short the pauses run. Any app can ask for
+one:
+
+```python
+import socket
+with socket.create_connection(("127.0.0.1", 52719)) as c:
+    c.sendall("::as claude
+The tests have passed.".encode("utf-8"))
+```
+
+A treatment costs about three hundredths of a second per second of audio, all
+of it in the chunk being rendered — measured at 0.30 s added before the first
+word on a short line, and less on the treatments with fewer stages.

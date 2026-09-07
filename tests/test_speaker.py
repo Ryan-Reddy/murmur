@@ -216,3 +216,69 @@ class MouseHookLifecycle(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class Treatments(unittest.TestCase):
+    """The voice treatments. Cheap to check without a model: they are pure
+    signal processing over an array."""
+
+    @classmethod
+    def setUpClass(cls):
+        import numpy as np
+        import voices
+        cls.np, cls.voices = np, voices
+        cls.rate = 24000
+        cls.audio = np.random.default_rng(1).normal(
+            0, 0.15, cls.rate * 2).astype("float32")
+
+    def test_every_treatment_preserves_length_and_stays_finite(self):
+        for name in self.voices.TREATMENTS:
+            with self.subTest(treatment=name):
+                out = self.voices.treat(name, self.audio, self.rate)
+                self.assertEqual(len(out), len(self.audio))
+                self.assertTrue(bool(self.np.all(self.np.isfinite(out))))
+
+    def test_nothing_clips(self):
+        """Anything over 1.0 crackles on the way out."""
+        for name in self.voices.TREATMENTS:
+            with self.subTest(treatment=name):
+                out = self.voices.treat(name, self.audio, self.rate)
+                self.assertLessEqual(float(self.np.max(self.np.abs(out))), 1.0)
+
+    def test_clean_is_untouched(self):
+        out = self.voices.treat("clean", self.audio, self.rate)
+        self.assertTrue(bool(self.np.array_equal(out, self.audio)))
+
+    def test_an_unknown_name_reads_rather_than_fails(self):
+        """A typo in a profile should not silence a read."""
+        out = self.voices.treat("no-such-treatment", self.audio, self.rate)
+        self.assertTrue(bool(self.np.array_equal(out, self.audio)))
+
+    def test_empty_and_tiny_audio_are_survivable(self):
+        """A treatment is a decoration. It must never be the reason nothing
+        gets spoken -- an empty chunk used to raise out of every chain."""
+        for length in (0, 1, 64, self.voices.MIN_SAMPLES - 1):
+            clip = self.np.zeros(length, dtype="float32")
+            for name in self.voices.TREATMENTS:
+                with self.subTest(treatment=name, length=length):
+                    try:
+                        out = self.voices.treat(name, clip, self.rate)
+                    except Exception as error:
+                        self.fail(f"{name} raised on {length} samples: {error}")
+                    self.assertEqual(len(out), length)
+
+    def test_treatments_actually_differ(self):
+        """If two chains produced the same audio, one of them is not wired up."""
+        rendered = {n: self.voices.treat(n, self.audio, self.rate)
+                    for n in self.voices.TREATMENTS if n != "clean"}
+        names = sorted(rendered)
+        for i, a in enumerate(names):
+            for b in names[i + 1:]:
+                self.assertFalse(bool(self.np.allclose(rendered[a], rendered[b])),
+                                 f"{a} and {b} came out identical")
+
+    def test_cost_estimate_is_in_the_right_order(self):
+        self.assertEqual(self.voices.cost_estimate("clean", 10), 0.0)
+        cost = self.voices.cost_estimate("agent", 8.5)
+        self.assertGreater(cost, 0.05)
+        self.assertLess(cost, 1.0)

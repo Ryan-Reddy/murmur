@@ -12,6 +12,7 @@ Runs as a tray icon (green while speaking). Quit from the tray menu.
 """
 
 import ctypes
+import json
 import os
 import queue
 import socket
@@ -85,6 +86,66 @@ FADE_STEP = 0.34        # eased: each frame closes a third of what is left
 # Localhost text-in port: other local apps (e.g. ryans-assistant) send UTF-8
 # text here and it plays through the same pill + hotkey controls.
 MURMUR_PORT = 52719
+
+# Named voices. Anything sending text can ask for one by name, so a
+# notification from Claude and a paragraph you asked for are told apart by ear
+# rather than by being louder. Edited in settings.json; these are the fallbacks.
+DEFAULT_PROFILES = {
+    "default": {
+        "blend": [["bf_emma", 0.7], ["af_nicole", 0.3]],
+        "speed": 1.0, "treatment": "clean",
+        "sentence_pause": 0.25, "clause_pause": 0.10,
+    },
+    "claude": {
+        "blend": [["bf_emma", 0.7], ["af_nicole", 0.3]],
+        "speed": 0.95, "treatment": "bbc",
+        "sentence_pause": 0.10, "clause_pause": 0.03,
+    },
+    "veronica": {
+        "blend": [["bf_emma", 0.7], ["af_nicole", 0.3]],
+        "speed": 0.95, "treatment": "veronica",
+        "sentence_pause": 0.10, "clause_pause": 0.03,
+    },
+    "submarine": {
+        "blend": [["bf_emma", 0.7], ["af_nicole", 0.3]],
+        "speed": 0.95, "treatment": "submarine",
+        "sentence_pause": 0.10, "clause_pause": 0.03,
+    },
+    "agent": {
+        "blend": [["bf_emma", 0.7], ["af_nicole", 0.3]],
+        "speed": 0.95, "treatment": "agent",
+        "sentence_pause": 0.10, "clause_pause": 0.03,
+    },
+}
+
+
+def settings_path() -> Path:
+    base = os.environ.get("LOCALAPPDATA") or str(ROOT)
+    return Path(base) / "Murmur" / "settings.json"
+
+
+def load_settings() -> dict:
+    """Whatever is on disk, over the defaults. A broken file is ignored rather
+    than fatal -- losing your settings should not cost you the voice."""
+    settings = {"profiles": {k: dict(v) for k, v in DEFAULT_PROFILES.items()}}
+    try:
+        stored = json.loads(settings_path().read_text(encoding="utf-8"))
+    except Exception:
+        return settings
+    for name, profile in (stored.get("profiles") or {}).items():
+        if isinstance(profile, dict):
+            settings["profiles"].setdefault(name, {}).update(profile)
+    return settings
+
+
+def save_settings(settings: dict) -> bool:
+    try:
+        path = settings_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+        return True
+    except Exception:
+        return False
 
 if getattr(sys, "frozen", False):
     ROOT = Path(sys.executable).parent  # packaged: models/ sits next to Murmur.exe
@@ -219,7 +280,7 @@ def grab_selection() -> str:
 
 # ------------------------------------------------------------------ text-in
 
-def start_text_server(speaker, control):
+def start_text_server(speaker, control, profile_for=None):
     def serve():
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -240,10 +301,18 @@ def start_text_server(speaker, control):
                     chunks.append(data)
                     total += len(data)
                 text = b"".join(chunks).decode("utf-8", "replace").strip()
+                # A first line of "::as <name>" picks a voice for what follows.
+                # Anything else beginning with :: is a command, and plain text
+                # is read in the default voice, as it always was.
+                profile = None
+                if text.startswith("::as ") and profile_for is not None:
+                    first, _, rest = text.partition("\n")
+                    profile = profile_for(first[len("::as "):].strip())
+                    text = rest.strip()
                 if text.startswith("::"):
                     control(text)
                 elif text:
-                    speaker.speak(text)
+                    speaker.speak(text, profile=profile)
 
     threading.Thread(target=serve, daemon=True).start()
 
@@ -290,11 +359,17 @@ class _Loading:
     of testing for readiness, and the real Speaker replaces it in place.
     """
 
+    # Every attribute the real Speaker carries. Missing one is not a small
+    # oversight: the tray menu reads them while the model is still loading, and
+    # an AttributeError there takes the whole icon down.
     speed = 1.0
     volume = 1.0
     repeat = False
+    treatment = "clean"
+    sentence_pause = 0.25
+    clause_pause = 0.10
 
-    def speak(self, text): pass
+    def speak(self, text, profile=None): pass
 
     def stop(self): pass
 
@@ -337,10 +412,19 @@ def main():
         print("Murmur is already running.")
         return
     ui_events: queue.Queue = queue.Queue()
+    settings = load_settings()
+
+    def profile_for(name):
+        """A named profile, or None to leave the voice alone."""
+        return settings["profiles"].get(name)
 
     print("Loading Kokoro model...")
     close_splash("loading the voice model…")
     speaker = _Loading()
+    _default_profile = settings["profiles"].get("default", {})
+    speaker.treatment = _default_profile.get("treatment", "clean")
+    speaker.sentence_pause = _default_profile.get("sentence_pause", 0.25)
+    speaker.clause_pause = _default_profile.get("clause_pause", 0.10)
 
     def load_voice():
         """Build the real Speaker off the tkinter thread."""
@@ -364,6 +448,9 @@ def main():
             )
             voice.speed, voice.volume = speaker.speed, speaker.volume
             voice.repeat = speaker.repeat
+            voice.treatment = speaker.treatment
+            voice.sentence_pause = speaker.sentence_pause
+            voice.clause_pause = speaker.clause_pause
             # Warm the graph here rather than making the first real read pay it.
             voice.kokoro.create("ready", voice=voice.voice, speed=1.0)
         except Exception as exc:  # a missing or corrupt model, most likely
@@ -993,12 +1080,42 @@ def main():
             for level in (0.25, 0.5, 0.75, 1.0)
         ]
     )
+    def set_treatment(name):
+        def handler(_icon, _item):
+            speaker.treatment = name
+            profile = settings["profiles"].setdefault("default", {})
+            profile["treatment"] = name
+            # Shorter pauses go with a treated voice: it is meant to run on.
+            flowing = name != "clean"
+            speaker.sentence_pause = profile["sentence_pause"] = 0.10 if flowing else 0.25
+            speaker.clause_pause = profile["clause_pause"] = 0.03 if flowing else 0.10
+            save_settings(settings)
+            ui_events.put(("treatment", name))
+        return handler
+
+    voice_menu = pystray.Menu(
+        *[
+            pystray.MenuItem(
+                label, set_treatment(name),
+                checked=lambda item, name=name: speaker.treatment == name,
+                radio=True,
+            )
+            for name, label in (
+                ("clean", "Clean — no treatment"),
+                ("bbc", "BBC — even and measured"),
+                ("veronica", "Radio Veronica — offshore AM"),
+                ("submarine", "Yellow Submarine — tape"),
+                ("agent", "Pocket talker — concealed recorder"),
+            )
+        ]
+    )
     menu = pystray.Menu(
         pystray.MenuItem(f"Read selection: {HOTKEY_READ}", None, enabled=False),
         pystray.MenuItem(f"Pause: {HOTKEY_PAUSE} or click the pill", None, enabled=False),
         pystray.MenuItem(f"Stop: {HOTKEY_STOP} or the pill's ✕", None, enabled=False),
         pystray.MenuItem("Speed", speed_menu),
         pystray.MenuItem("Volume", volume_menu),
+        pystray.MenuItem("Voice", voice_menu),
         pystray.MenuItem(
             f"Select mode ({HOTKEY_SELECTMODE}): read on select",
             lambda icon, item: toggle_select_mode(),
@@ -1026,6 +1143,8 @@ def main():
             ::stop  ::pause  ::speed +1 | -1 | 1.25  ::volume 0.6
             ::select on | off | toggle  ::pin on | off | toggle
             ::repeat on | off | toggle  ::read  ::close  ::help  ::source
+            ::voice clean | bbc | veronica | submarine | agent
+            ::as <profile> followed by a newline and the text to speak
         """
         name, _, arg = line[2:].strip().partition(" ")
         arg = arg.strip()
@@ -1044,6 +1163,11 @@ def main():
             close_pill()
         elif name == "source":
             go_to_source()
+        elif name == "voice":
+            import voices
+
+            if arg in voices.TREATMENTS:
+                set_treatment(arg)(None, None)
         elif name == "help":
             wanted = {"on": True, "off": False}.get(arg, not pill["helping"])
             if wanted != pill["helping"]:
@@ -1105,6 +1229,9 @@ def main():
                         flash(f"⚡  Speed {value}×")
                 elif kind == "volume":
                     set_volume(value)
+                elif kind == "treatment":
+                    if not pill["speaking"]:
+                        flash(f"♪  Voice: {value}")
                 elif kind == "repeat":
                     render_pill()
                     if not pill["speaking"]:
@@ -1146,7 +1273,7 @@ def main():
         remember_load(seconds)
         close_splash()
         icon.title = f"Murmur — {HOTKEY_READ} reads your selection"
-        start_text_server(speaker, control)
+        start_text_server(speaker, control, profile_for)
         # Bound late and through lambdas: at startup `speaker` is still the
         # stand-in, and a bound method would keep pointing at it forever.
         keyboard.add_hotkey(HOTKEY_READ, on_read)

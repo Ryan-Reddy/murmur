@@ -24,6 +24,8 @@ import time
 import numpy as np
 import onnxruntime as rt
 import sounddevice as sd
+
+import voices
 from kokoro_onnx import Kokoro
 
 DEFAULT_BLEND = (("bf_emma", 0.7), ("af_nicole", 0.3))
@@ -145,6 +147,9 @@ class Speaker:
         speed: float = 1.0,
         volume: float = 1.0,
         repeat: bool = False,
+        treatment: str = "clean",
+        sentence_pause: float = 0.25,
+        clause_pause: float = 0.10,
         threads: int = 0,
         on_state=None,
         on_text=None,
@@ -161,6 +166,12 @@ class Speaker:
         self.speed = speed
         self.volume = volume
         self.repeat = repeat
+        self.treatment = treatment
+        # Kokoro's own pauses. Shorter than the 0.25 default makes speech run
+        # together rather than arrive a sentence at a time.
+        self.sentence_pause = sentence_pause
+        self.clause_pause = clause_pause
+        self._blends = {}
         self._on_state = on_state or (lambda speaking: None)
         self._on_text = on_text or (lambda text: None)
         self._on_sentence = on_sentence or (lambda text: None)
@@ -173,6 +184,14 @@ class Speaker:
 
     def blend_voice(self, blend):
         return sum(self.kokoro.get_voice_style(name) * weight for name, weight in blend)
+
+    def voice_for(self, blend):
+        """A blended style, kept once it has been built. Mixing is cheap but
+        a profile is used over and over."""
+        key = tuple((name, round(weight, 4)) for name, weight in blend)
+        if key not in self._blends:
+            self._blends[key] = self.blend_voice(blend)
+        return self._blends[key]
 
     def word_spans(self, sentence: str, samples: int) -> list[tuple[int, int]]:
         """Where each word of a sentence falls in the rendered audio.
@@ -229,25 +248,40 @@ class Speaker:
         if thread is not None:
             thread.join()
 
-    def speak(self, text: str):
-        """Start reading text aloud; interrupts any reading in progress."""
+    def speak(self, text: str, profile: dict | None = None):
+        """Start reading text aloud; interrupts any reading in progress.
+
+        `profile` overrides voice, speed, treatment and pauses for this
+        utterance only, so a notification can sound different from a read
+        without disturbing the settings either side of it.
+        """
         with self._lock:
             self.stop()
             if self._thread is not None:
                 self._thread.join(timeout=5)
             self._stop = threading.Event()
             self._thread = threading.Thread(
-                target=self._run, args=(text, self._stop), daemon=True
+                target=self._run, args=(text, self._stop, profile or {}), daemon=True
             )
             self._thread.start()
 
-    def _run(self, text: str, stop: threading.Event):
+    def _run(self, text: str, stop: threading.Event, profile: dict | None = None):
         sentences = split_sentences(text)
         if not sentences:
             return
         # Say what is about to be read before anything slow happens. Waiting for
         # the first chunk to synthesize meant the words appeared seconds after
         # the hotkey, when they were known all along.
+        # Resolved once, so a setting changed mid-read cannot alter this one.
+        profile = profile or {}
+        blend = profile.get("blend")
+        setting = {
+            "voice": self.voice_for(blend) if blend else self.voice,
+            "speed": profile.get("speed", self.speed),
+            "treatment": profile.get("treatment", self.treatment),
+            "sentence_pause": profile.get("sentence_pause", self.sentence_pause),
+            "clause_pause": profile.get("clause_pause", self.clause_pause),
+        }
         self._on_state(True)
         self._on_text(" ".join(sentences))
         # PortAudio snapshots the device list at init; a monitor sleeping or an
@@ -264,7 +298,7 @@ class Speaker:
         out = {"stream": None, "rate": None}
         try:
             while not stop.is_set():
-                rate = self._read_through(sentences, stop, out)
+                rate = self._read_through(sentences, stop, out, setting)
                 # Checked here rather than up front, so the toggle can be
                 # flipped mid-read and takes effect at the end of this pass.
                 if stop.is_set() or not self.repeat:
@@ -297,12 +331,12 @@ class Speaker:
             except Exception:
                 pass
 
-    def _read_through(self, sentences, stop, out) -> int:
+    def _read_through(self, sentences, stop, out, setting) -> int:
         """One pass over the text. Returns the sample rate it played at."""
         rate, spoken = FALLBACK_RATE, 0
         q: queue.Queue = queue.Queue(maxsize=3)
         threading.Thread(
-            target=self._produce, args=(sentences, q, stop), daemon=True
+            target=self._produce, args=(sentences, q, stop, setting), daemon=True
         ).start()
         while not stop.is_set():
             try:
@@ -373,14 +407,21 @@ class Speaker:
         scale and anything more clips."""
         return float(min(max(self.volume, 0.0), 1.0)) ** 2
 
-    def _produce(self, sentences, q, stop):
+    def _produce(self, sentences, q, stop, setting=None):
         for sentence in sentences:
             if stop.is_set():
                 return
+            setting = setting or {}
             try:
                 audio, sample_rate = self.kokoro.create(
-                    sentence, voice=self.voice, speed=self.speed
+                    sentence,
+                    voice=setting.get("voice", self.voice),
+                    speed=setting.get("speed", self.speed),
+                    sentence_pause=setting.get("sentence_pause", self.sentence_pause),
+                    clause_pause=setting.get("clause_pause", self.clause_pause),
                 )
+                audio = voices.treat(
+                    setting.get("treatment", self.treatment), audio, sample_rate)
             except Exception as exc:
                 print(f"Skipping unspeakable chunk: {exc}")
                 continue
