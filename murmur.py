@@ -70,6 +70,10 @@ NOW = "#fff4e6"         # and is warm white, which reads as lit rather than
 GREEN = "#74d3a4"       # inverted
 AMBER = "#f0b273"
 
+OPAQUE = 0.97           # the pill's settled opacity
+FADE_MS = 16            # a frame, near enough
+FADE_STEP = 0.34        # eased: each frame closes a third of what is left
+
 # Localhost text-in port: other local apps (e.g. ryans-assistant) send UTF-8
 # text here and it plays through the same pill + hotkey controls.
 MURMUR_PORT = 52719
@@ -80,19 +84,29 @@ else:
     ROOT = Path(__file__).parent
 
 
+_rounded_at = {}
+
+
 def round_corners(window, radius: int = 16):
     """Give a borderless window rounded corners.
 
     Tk has no way to do this; Windows does, by clipping the window to a region.
-    It has to be redone whenever the window resizes, since the region is in
-    pixels. Without it a sharp-cornered rectangle floats over an OS whose every
-    other surface is rounded, and reads as a debug window.
+    Without it a sharp-cornered rectangle floats over an OS whose every other
+    surface is rounded, and reads as a debug window.
+
+    Only when the size actually changes: SetWindowRgn redraws the whole window,
+    and doing that on every placement tears the control row while the pill is
+    fading or a word is being lit.
     """
     try:
         window.update_idletasks()
         width, height = window.winfo_width(), window.winfo_height()
         if width <= 1 or height <= 1:
             return
+        key = id(window)
+        if _rounded_at.get(key) == (width, height):
+            return
+        _rounded_at[key] = (width, height)
         hwnd = ctypes.windll.user32.GetParent(window.winfo_id()) or window.winfo_id()
         region = ctypes.windll.gdi32.CreateRoundRectRgn(
             0, 0, width + 1, height + 1, radius * 2, radius * 2
@@ -369,7 +383,7 @@ def main():
     root.withdraw()
     root.overrideredirect(True)
     root.attributes("-topmost", True)
-    root.attributes("-alpha", 0.95)
+    root.attributes("-alpha", 0.0)
     root.configure(bg=BG)
 
     # A hairline rim: one pixel of a lighter colour around the whole thing,
@@ -382,7 +396,7 @@ def main():
     # The sentence being spoken, with the current word lit as it is reached.
     reader = tk.Text(
         shell, height=3, width=52, wrap="word", relief="flat", cursor="arrow",
-        bg=BG, fg=MUTED, font=("Segoe UI", 11), padx=20, pady=16,
+        bg=BG, fg=MUTED, font=("Segoe UI", 11), padx=20, pady=(14),
         highlightthickness=0, borderwidth=0, spacing1=1, spacing3=7,
         takefocus=0,
     )
@@ -397,10 +411,10 @@ def main():
     # A two-pixel line under the text: where you are in the whole selection.
     # It is the only moving thing when the pill is otherwise still.
     progress = tk.Canvas(shell, height=2, bg=BG, highlightthickness=0)
-    progress.pack(fill="x", padx=20, pady=(0, 2))
+    progress.pack(fill="x", padx=20, pady=(0, 0))
 
     controls = tk.Frame(shell, bg=BG)
-    controls.pack(fill="x", padx=14, pady=(6, 12))
+    controls.pack(fill="x", padx=14, pady=(2, 10))
 
     def touched():
         """Any deliberate interaction keeps the pill up for a while, so a second
@@ -423,7 +437,7 @@ def main():
         pill["pinned"] = False  # an explicit dismissal outranks the pin
         speaker.stop()
         cancel_hide()
-        root.withdraw()
+        hide_pill()
 
     def set_reader(text):
         """Put plain text in the reading area, with no word spans behind it."""
@@ -540,10 +554,12 @@ def main():
             height = 4 + i * 1.5
             # Muted unless it is being used: volume is a secondary control and
             # was previously the loudest thing on the row.
-            volume_bar.create_rectangle(
-                i * 8 + 1, 15 - height, i * 8 + 5, 15,
-                fill=(ACCENT if volume_bar.hot else MUTED) if lit else EDGE,
-                width=0,
+            # Lines with round caps rather than rectangles: the bars were the
+            # one blocky thing left beside all the soft edges.
+            colour = (ACCENT if volume_bar.hot else MUTED) if lit else EDGE
+            volume_bar.create_line(
+                i * 8 + 3, 14, i * 8 + 3, 14 - height,
+                fill=colour, width=3, capstyle="round",
             )
 
     def set_volume(level: float, announce: bool = True):
@@ -735,11 +751,45 @@ def main():
             return rect.left, rect.top, rect.right, rect.bottom
         return 0, 0, root.winfo_screenwidth(), root.winfo_screenheight()
 
+    # Nothing well made appears instantly. Easing rather than a linear ramp:
+    # each frame closes a third of the remaining distance, which starts quickly
+    # and settles, the way a physical thing does.
+    fade = {"job": None, "now": 0.0}
+
+    def fade_to(target: float, then=None):
+        if fade["job"] is not None:
+            root.after_cancel(fade["job"])
+            fade["job"] = None
+
+        def step():
+            remaining = target - fade["now"]
+            if abs(remaining) < 0.02:
+                fade["now"] = target
+                root.attributes("-alpha", target)
+                fade["job"] = None
+                if then is not None:
+                    then()
+                return
+            fade["now"] += remaining * FADE_STEP
+            root.attributes("-alpha", fade["now"])
+            fade["job"] = root.after(FADE_MS, step)
+
+        step()
+
+    def hide_pill():
+        fade_to(0.0, root.withdraw)
+
     def place_pill():
         root.update_idletasks()
         left, top, right, bottom = work_area()
         width, height = root.winfo_reqwidth(), root.winfo_reqheight()
-        if pill["pos"]:
+        if root.winfo_ismapped():
+            # Already on screen: keep the position it has. Recomputing it on
+            # every render nudged the window as the text changed width, and a
+            # layered window that moves leaves the old paint behind -- which is
+            # why the control row appeared doubled.
+            x, y = root.winfo_x(), root.winfo_y()
+        elif pill["pos"]:
             x, y = pill["pos"]  # wherever it was dragged to, and left
         else:
             x = left + (right - left - width) // 2
@@ -749,7 +799,11 @@ def main():
         y = max(top, min(y, bottom - height))
         root.geometry(f"+{x}+{y}")
         if not pill["dismissed"]:
-            root.deiconify()
+            if not root.winfo_ismapped():
+                fade["now"] = 0.0
+                root.attributes("-alpha", 0.0)
+                root.deiconify()
+            fade_to(OPAQUE)
         round_corners(root)
 
     hide_timer = {"id": None}
@@ -772,7 +826,7 @@ def main():
             if root.winfo_containing(*root.winfo_pointerxy()) is not None:
                 hide_later(LINGER_AFTER_TOUCH)  # the cursor is on it; leave it
                 return
-            root.withdraw()
+            hide_pill()
 
         hide_timer["id"] = root.after(delay, done)
 

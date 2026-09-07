@@ -174,6 +174,41 @@ so another app — or a test — can drive Murmur without touching the keyboard:
 | `::close` | dismiss the pill |
 | `::help on` / `off` / `toggle` | show what everything does |
 
+## Speak Claude Code notifications
+
+`integrations/claude-code/claude_notify.py` is a Claude Code hook that posts
+to the text-in port, so Murmur says what your Claude Code sessions are up
+to — in every project, in Murmur's voice:
+
+- *"my-project: Claude needs your permission to use Bash"* — the
+  `Notification` event, whenever a session wants attention;
+- *"my-project: Claude is done. Tests pass. Want me to open the PR?"* — the
+  `Stop` event, reading the opening of Claude's last message (markdown
+  stripped, about 300 characters) plus its closing question, from the
+  session transcript the hook is handed;
+- *"my-project: Still working: editing main.py."* — `PostToolUse`, throttled
+  to nothing until a turn has run a minute and then at most every three
+  minutes per session (`TURN_WARMUP` and `NARRATE_EVERY` in the script).
+
+Stdlib only, so any Python 3 runs it. Add the same entry under all three
+events in `~/.claude/settings.json` (exec form: no shell, no quoting):
+
+```json
+"hooks": {
+  "Notification": [ { "hooks": [ { "type": "command",
+    "command": "C:\\Python312\\python.exe",
+    "args": ["C:\\path\\to\\murmur\\integrations\\claude-code\\claude_notify.py"],
+    "async": true, "timeout": 10 } ] } ],
+  "Stop": [ /* the same entry */ ],
+  "PostToolUse": [ /* the same entry */ ]
+}
+```
+
+Don't add it under `PermissionRequest` or `PreToolUse`/`AskUserQuestion`:
+both raise a `Notification` as well, so you'd hear everything twice. If
+Murmur isn't running the hook connects to nothing and stays silent; every
+spoken line is also logged to `claude_notify.log` next to the script.
+
 ## Standalone build (no Python needed)
 
 ```
