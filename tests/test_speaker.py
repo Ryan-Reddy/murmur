@@ -309,3 +309,100 @@ class Treatments(unittest.TestCase):
         cost = self.voices.cost_estimate("agent", 8.5)
         self.assertGreater(cost, 0.05)
         self.assertLess(cost, 1.0)
+
+
+class Mixer(unittest.TestCase):
+    """The recipe space: the characters as points in it, and the space
+    between them."""
+
+    @classmethod
+    def setUpClass(cls):
+        import numpy as np
+
+        import voices
+
+        cls.voices = voices
+        cls.np = np
+        rng = np.random.default_rng(4)
+        cls.audio = (rng.normal(0, 0.2, 24000 * 2)).astype("float32")
+        cls.rate = 24000
+
+    def test_every_character_has_a_position(self):
+        self.assertEqual(set(self.voices.RECIPES), set(self.voices.TREATMENTS))
+
+    def test_a_recipe_only_names_real_ingredients(self):
+        for name, recipe in self.voices.RECIPES.items():
+            with self.subTest(character=name):
+                self.assertLessEqual(set(recipe), set(self.voices.INGREDIENTS))
+
+    def test_recipe_for_fills_in_the_rest(self):
+        recipe = self.voices.recipe_for("bbc")
+        self.assertEqual(set(recipe), set(self.voices.INGREDIENTS))
+        self.assertEqual(recipe["tape"], 0.0)
+        self.assertGreater(recipe["narrow"], 0.0)
+
+    def test_an_unknown_character_is_all_zeroes_not_a_crash(self):
+        recipe = self.voices.recipe_for("nobody")
+        self.assertEqual(set(recipe.values()), {0.0})
+
+    def test_cook_keeps_length_and_stays_in_range(self):
+        for name in self.voices.RECIPES:
+            with self.subTest(character=name):
+                out = self.voices.cook(self.audio, self.rate,
+                                       self.voices.recipe_for(name))
+                self.assertEqual(len(out), len(self.audio))
+                self.assertTrue(self.np.all(self.np.isfinite(out)))
+                self.assertLessEqual(float(self.np.max(self.np.abs(out))), 1.0)
+
+    def test_every_ingredient_actually_does_something(self):
+        """A dial that changes nothing is a lie told to the person using it."""
+        base = self.voices.cook(self.audio, self.rate,
+                                self.voices.recipe_for("clean"))
+        for key in self.voices.INGREDIENTS:
+            with self.subTest(ingredient=key):
+                moved = self.voices.cook(self.audio, self.rate, {key: 1.0})
+                difference = float(self.np.max(self.np.abs(moved - base)))
+                self.assertGreater(difference, 1e-3, f"{key} did nothing")
+
+    def test_amounts_are_clamped_rather_than_trusted(self):
+        wild = {key: 40.0 for key in self.voices.INGREDIENTS}
+        wild["narrow"] = -12.0
+        out = self.voices.cook(self.audio, self.rate, wild)
+        self.assertTrue(self.np.all(self.np.isfinite(out)))
+        self.assertLessEqual(float(self.np.max(self.np.abs(out))), 1.0)
+
+    def test_a_recipe_beats_the_name_it_came_with(self):
+        named = self.voices.treat("bbc", self.audio, self.rate)
+        mixed = self.voices.treat("bbc", self.audio, self.rate,
+                                  recipe=self.voices.recipe_for("submarine"))
+        self.assertFalse(self.np.allclose(named, mixed))
+
+    def test_an_empty_recipe_leaves_the_character_alone(self):
+        """Choosing a name must keep running that name's own chain, exactly."""
+        for name in ("bbc", "veronica", "submarine", "agent"):
+            with self.subTest(character=name):
+                self.assertTrue(self.np.array_equal(
+                    self.voices.treat(name, self.audio, self.rate),
+                    self.voices.treat(name, self.audio, self.rate, recipe={})))
+
+    def test_an_all_zero_recipe_is_treated_as_no_recipe(self):
+        zeros = {key: 0.0 for key in self.voices.INGREDIENTS}
+        self.assertTrue(self.np.array_equal(
+            self.voices.treat("agent", self.audio, self.rate, recipe=zeros),
+            self.voices.treat("agent", self.audio, self.rate)))
+
+    def test_a_broken_recipe_still_reads(self):
+        out = self.voices.treat("clean", self.audio, self.rate,
+                                recipe={"narrow": "not a number"})
+        self.assertEqual(len(out), len(self.audio))
+
+    def test_characters_stay_distinguishable_as_recipes(self):
+        """If two points cooked the same, the space between them is a lie."""
+        cooked = {name: self.voices.cook(self.audio, self.rate,
+                                         self.voices.recipe_for(name))
+                  for name in ("bbc", "veronica", "submarine", "agent")}
+        names = list(cooked)
+        for i, first in enumerate(names):
+            for second in names[i + 1:]:
+                with self.subTest(pair=(first, second)):
+                    self.assertFalse(self.np.allclose(cooked[first], cooked[second]))

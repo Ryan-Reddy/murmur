@@ -167,6 +167,9 @@ class Speaker:
         self.volume = volume
         self.repeat = repeat
         self.treatment = treatment
+        # Ingredient amounts. Empty means "just run the named chain"; anything
+        # in here means the dials have been moved and the mixer takes over.
+        self.recipe = {}
         # Kokoro's own pauses. Shorter than the 0.25 default makes speech run
         # together rather than arrive a sentence at a time.
         self.sentence_pause = sentence_pause
@@ -279,6 +282,7 @@ class Speaker:
             "voice": self.voice_for(blend) if blend else self.voice,
             "speed": profile.get("speed", self.speed),
             "treatment": profile.get("treatment", self.treatment),
+            "recipe": profile.get("recipe") or self.recipe or None,
             "sentence_pause": profile.get("sentence_pause", self.sentence_pause),
             "clause_pause": profile.get("clause_pause", self.clause_pause),
         }
@@ -421,7 +425,8 @@ class Speaker:
                     clause_pause=setting.get("clause_pause", self.clause_pause),
                 )
                 audio = voices.treat(
-                    setting.get("treatment", self.treatment), audio, sample_rate)
+                    setting.get("treatment", self.treatment), audio, sample_rate,
+                    recipe=setting.get("recipe"))
             except Exception as exc:
                 print(f"Skipping unspeakable chunk: {exc}")
                 continue

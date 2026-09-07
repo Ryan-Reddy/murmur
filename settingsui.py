@@ -48,6 +48,33 @@ def _treatments():
         return [("clean", "Murmur — plain, no colour")]
 
 
+def _ingredients():
+    """The mixer's dials. Empty if the DSP module will not import, in which
+    case the window is still a window and the characters still work."""
+    try:
+        import voices
+
+        return voices.INGREDIENTS
+    except Exception:
+        return {}
+
+
+def _recipe_for(name):
+    try:
+        import voices
+
+        return voices.recipe_for(name)
+    except Exception:
+        return {}
+
+
+def _percent(value) -> str:
+    amount = float(value)
+    if amount < 0.005:
+        return "none"
+    return f"{amount * 100:.0f}%"
+
+
 # A menu of 54 voices is taller than the screen, so it breaks into columns.
 MENU_COLUMN = 18
 
@@ -116,6 +143,12 @@ class _Window:
         self.sentence_pause = tk.DoubleVar(value=0.25)
         self.clause_pause = tk.DoubleVar(value=0.10)
 
+        # Built before the rows, because a row that explains itself on hover
+        # writes into this one.
+        self._resting_note = ""
+        self.note = tk.Label(body, text="", bg=BG, fg=MUTED, justify="left",
+                             font=("Segoe UI", 9), anchor="w", wraplength=400)
+
         singers = self._voice_names()
         keys = [key for key, _ in singers]
         said = dict(singers)
@@ -143,6 +176,18 @@ class _Window:
                   lambda row: self._dropdown(row, self.treatment,
                                              [t[0] for t in treatments],
                                              dict(treatments)))
+
+        # The mixer. Picking a character loads its recipe here; moving any of
+        # these takes over from the character, so you can start at The
+        # Informant and walk it towards Abbey.
+        self.amounts = {}
+        for key, hint in _ingredients().items():
+            self.amounts[key] = tk.DoubleVar(value=0.0)
+            self._row(body, hint.split(" — ")[0],
+                      lambda row, k=key: self._slider(
+                          row, self.amounts[k], 0.0, 1.0, 0.01, _percent),
+                      hint=hint)
+        self.treatment.trace_add("write", self._character_chosen)
         self._row(body, "Sentence pause",
                   lambda row: self._slider(row, self.sentence_pause, 0.0, 0.40,
                                            0.01, lambda v: f"{float(v):.2f}s"))
@@ -150,8 +195,6 @@ class _Window:
                   lambda row: self._slider(row, self.clause_pause, 0.0, 0.25,
                                            0.01, lambda v: f"{float(v):.2f}s"))
 
-        self.note = tk.Label(body, text="", bg=BG, fg=MUTED, justify="left",
-                             font=("Segoe UI", 9), anchor="w", wraplength=380)
         self.note.pack(fill="x", pady=(18, 0))
 
         buttons = tk.Frame(body, bg=BG)
@@ -189,7 +232,7 @@ class _Window:
                  font=("Segoe UI", 8, "bold")).pack(fill="x", pady=(18, 5))
         tk.Frame(parent, bg=EDGE, height=1).pack(fill="x", pady=(0, 8))
 
-    def _row(self, parent, label, build):
+    def _row(self, parent, label, build, hint=None):
         """A labelled control.
 
         `build` is handed the row and must parent its widget to it: a widget
@@ -199,10 +242,23 @@ class _Window:
         """
         row = tk.Frame(parent, bg=BG)
         row.pack(fill="x", pady=3)
-        tk.Label(row, text=label, bg=BG, fg=CONTROL, font=("Segoe UI", 10),
-                 width=14, anchor="w").pack(side="left")
+        name = tk.Label(row, text=label, bg=BG, fg=CONTROL,
+                        font=("Segoe UI", 10), width=14, anchor="w")
+        name.pack(side="left")
+        if hint:
+            # The hint goes where the note goes, rather than in a tooltip:
+            # there is already somewhere on this window that explains things.
+            name.bind("<Enter>", lambda _e, h=hint: self._say(h))
+            name.bind("<Leave>", lambda _e: self._say(None))
         build(row).pack(side="left", fill="x", expand=True)
         return row
+
+    def _say(self, text):
+        """Explain something under the pointer, and put the note back after."""
+        if text is None:
+            self.note.config(text=self._resting_note)
+        else:
+            self.note.config(text=text)
 
     def _dropdown(self, parent, variable, values, labels=None):
         labels = labels or {}
@@ -298,6 +354,23 @@ class _Window:
 
     # -- state ---------------------------------------------------------------
 
+    def _character_chosen(self, *_):
+        """Choosing a character loads its recipe into the mixer.
+
+        The characters run their own hand-built chains, so a name on its own
+        sounds exactly as it always did; this is only where the dials start
+        from if you decide to move them.
+        """
+        if self.loading:
+            return
+        self.loading = True
+        try:
+            recipe = _recipe_for(self.treatment.get())
+            for key, variable in self.amounts.items():
+                variable.set(round(float(recipe.get(key, 0.0)), 2))
+        finally:
+            self.loading = False
+
     def load_profile(self, name):
         """Fill the form from a stored profile. Re-entrant: setting the name
         fires the picker's trace, which lands back here."""
@@ -316,16 +389,20 @@ class _Window:
             self.treatment.set(profile.get("treatment", "clean"))
             self.sentence_pause.set(profile.get("sentence_pause", 0.25))
             self.clause_pause.set(profile.get("clause_pause", 0.10))
+            recipe = profile.get("recipe") or _recipe_for(
+                profile.get("treatment", "clean"))
+            for key, variable in self.amounts.items():
+                variable.set(round(float(recipe.get(key, 0.0) or 0.0), 2))
             self.profile_name.set(name)
             self.job.config(text=JOBS.get(name) or FREELANCE.format(name=name))
-            self.note.config(
-                text=f"Editing “{name}”. Nothing changes until you save.")
+            self._resting_note = f"Editing “{name}”. Nothing changes until you save."
+            self.note.config(text=self._resting_note)
         finally:
             self.loading = False
 
     def as_profile(self) -> dict:
         first = max(0.0, min(1.0, self.mix.get() / 100.0))
-        return {
+        profile = {
             "blend": [[self.voice_a.get(), round(first, 3)],
                       [self.voice_b.get(), round(1 - first, 3)]],
             "speed": round(self.speed.get(), 3),
@@ -333,6 +410,14 @@ class _Window:
             "sentence_pause": round(self.sentence_pause.get(), 3),
             "clause_pause": round(self.clause_pause.get(), 3),
         }
+        # Only when the dials have actually been moved off the character's own
+        # position. Otherwise the profile stays a plain name, and the name
+        # keeps running the hand-built chain it always did.
+        recipe = {key: round(var.get(), 3) for key, var in self.amounts.items()}
+        if recipe != {key: round(float(value), 3) for key, value
+                      in _recipe_for(self.treatment.get()).items()}:
+            profile["recipe"] = recipe
+        return profile
 
     # -- actions -------------------------------------------------------------
 

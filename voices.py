@@ -224,6 +224,117 @@ TREATMENTS = {
     "agent": _agent,
 }
 
+
+# ------------------------------------------------------------------- recipes
+#
+# The four chains above are each a fixed set of amounts. Written out as
+# amounts instead, they stop being four things and become four points in one
+# space -- and the space between them is reachable. A lot of transistor, a
+# twist of spy, less tape.
+#
+# Every ingredient runs 0 to 1. The stages are in the same order the fixed
+# chains use them, so a recipe at a character's point comes out sounding like
+# that character; RECIPES holds the points, fitted rather than guessed (see
+# the note above them).
+
+INGREDIENTS = {
+    "narrow": "Narrow — how much of the band survives. Radio, then telephone.",
+    "transistor": "Transistor — driven until it warms and then until it grits.",
+    "squash": "Squash — the limiter. High is flat, loud, and runs on.",
+    "tape": "Tape — wow, flutter and a second pass wandering behind the first.",
+    "spy": "Spy — the honk of a tiny earpiece, and an AGC chasing a whisper.",
+    "fade": "Fade — a signal breathing in and out, the way skywave does.",
+    "room": "Room — a short tail, so the end of a word laps the next.",
+    "hiss": "Hiss — the floor under everything.",
+}
+
+# The band, in Hz, as `narrow` runs 0 -> 1. Log-interpolated: pitch is
+# logarithmic, so a linear sweep spends most of its travel doing nothing.
+BAND_LOW = (150.0, 560.0)
+BAND_HIGH = (9000.0, 3000.0)
+
+
+def _amount(recipe, name):
+    return min(1.0, max(0.0, float(recipe.get(name, 0.0) or 0.0)))
+
+
+def cook(audio, rate, recipe):
+    """One chain, run at whatever amounts the recipe asks for.
+
+    Reproduces the four fixed chains when handed their own recipe, and
+    anything between them when handed something else.
+    """
+    narrow = _amount(recipe, "narrow")
+    transistor = _amount(recipe, "transistor")
+    squash = _amount(recipe, "squash")
+    tape = _amount(recipe, "tape")
+    spy = _amount(recipe, "spy")
+    fade = _amount(recipe, "fade")
+    room = _amount(recipe, "room")
+    hiss = _amount(recipe, "hiss")
+
+    out = _station(audio, rate)
+
+    # -- what survives, and what is lifted on the way through ---------------
+    low = BAND_LOW[0] * (BAND_LOW[1] / BAND_LOW[0]) ** (narrow ** 1.6)
+    high = BAND_HIGH[0] * (BAND_HIGH[1] / BAND_HIGH[0]) ** narrow
+    edge = 120.0 + 130.0 * narrow
+
+    def curve(freqs):
+        gain = _band(freqs, low, high, edge)
+        # Anything band-limited peaks in the middle; that is most of why a
+        # radio sounds like a radio rather than like a quiet studio. Stood
+        # down as `spy` comes up, because a pocket recorder brings its own
+        # peak at 2600 and two of them stacked is a howl.
+        gain = gain * _bell(freqs, 1900, 5.2 * narrow * (1.0 - spy), 0.55)
+        gain = gain * _bell(freqs, 2600, 5.5 * spy, 0.45)   # the little driver
+        gain = gain * _bell(freqs, 1050, -3.0 * spy, 0.60)  # hollow below it
+        gain = gain * _shelf(freqs, 90, -10.0 * tape, "low")
+        gain = gain * _bell(freqs, 900, 2.0 * tape, 1.10)
+        gain = gain * _shelf(freqs, 7200, -8.0 * tape, "high")
+        return gain
+
+    out = _shape(out, rate, curve)
+
+    # -- what moves ---------------------------------------------------------
+    if tape > 0.02 or spy > 0.02:
+        out = _warble(out, rate,
+                      flutter=4.0 * tape + 7.0 * spy, flutter_hz=5.5 + 1.7 * spy,
+                      wow=26.0 * tape + 34.0 * spy, wow_hz=0.6 + 0.3 * spy)
+    if tape > 0.02:
+        # Artificial double tracking: a second pass a hair behind, wandering
+        # against the first. Abbey Road built a machine to do this.
+        delay = int(rate * 26.0 / 1000.0)
+        shifted = np.concatenate([np.zeros(delay, dtype="float32"), out])[: len(out)]
+        shifted = _warble(shifted, rate, flutter=7.0 * tape, flutter_hz=3.1,
+                          wow=14.0 * tape, wow_hz=0.9)
+        out = ((1 - 0.34 * tape) * out + 0.34 * tape * shifted).astype("float32")
+
+    # -- how hard it is held down -------------------------------------------
+    if squash > 0.02:
+        out = _compress(out, rate,
+                        threshold=0.16 - 0.115 * squash,
+                        ratio=3.0 + 8.0 * squash,
+                        ms=340.0 - 140.0 * squash,
+                        makeup=1.8 + 1.8 * squash)
+
+    # Tape distorts unevenly, which is why it sounds warm rather than clipped.
+    out = _saturate(out, 1.0 + 1.5 * transistor, bias=0.08 * tape)
+
+    if fade > 0.02:
+        t = np.arange(len(out)) / rate
+        breathing = 0.5 + 0.5 * np.sin(2 * np.pi * 0.13 * t)
+        out = (out * (1 - 0.16 * fade * breathing)).astype("float32")
+
+    if room > 0.02:
+        out = _room(out, rate, decay_ms=70.0 + 190.0 * room, mix=0.22 * room)
+
+    out = _hiss(out, 0.005 * hiss, 7)
+    # A narrower, more squashed signal is a smaller one; the fixed chains
+    # ended between 0.40 and 0.48 for the same reason.
+    level = 0.48 - 0.06 * spy - 0.02 * narrow
+    return _limit((out * level).astype("float32"))
+
 # Who these chains are -- names, notes and ordering -- lives in characters.py,
 # which imports nothing. The tray menu needs those names before the model has
 # begun loading, and importing this module for them would drag numpy onto the
@@ -246,18 +357,59 @@ from characters import (  # noqa: E402,F401
 MIN_SAMPLES = 256
 
 
-def treat(name, audio, rate):
-    """Run `audio` through a named treatment.
+# Where each character sits in the ingredient space. Fitted, not guessed:
+# a coordinate search against the hand-built chain's own output, scored on the
+# long-term spectrum in dB across fourteen bands plus the loudness envelope
+# over time, which is what catches compression and fade.
+#
+# Each was fitted over only the ingredients it actually contains. Left free,
+# the search put tape and fade on the BBC chain because they moved the
+# spectrum the right way -- and wow and flutter on a newsreader is exactly the
+# thing this metric cannot see and the ear cannot miss.
+#
+# How close each lands, RMS over those bands:
+#
+#     Abbey          0.95 dB
+#     Auntie         1.50 dB
+#     Veronica       1.89 dB
+#     The Informant  3.72 dB   <- the loose one
+#
+# Which is why the named characters below still run their own chain, exactly
+# as built. A recipe is where the sliders *start* from, not what you get for
+# choosing a name -- so nothing you already liked changes underneath you.
+RECIPES = {
+    "clean": {},
+    "bbc": {"narrow": 0.58, "transistor": 0.07, "squash": 0.25, "hiss": 0.06},
+    "veronica": {"narrow": 0.76, "transistor": 1.0, "squash": 0.85,
+                 "fade": 0.99, "hiss": 0.55},
+    "submarine": {"transistor": 0.62, "tape": 0.88, "room": 1.0, "hiss": 0.34},
+    "agent": {"narrow": 1.0, "transistor": 0.98, "squash": 0.9, "spy": 0.83,
+              "hiss": 1.0},
+}
+
+
+def recipe_for(name) -> dict:
+    """A character's position, as somewhere to start moving from."""
+    return {key: 0.0 for key in INGREDIENTS} | dict(RECIPES.get(name, {}))
+
+
+def treat(name, audio, rate, recipe=None):
+    """Run `audio` through a treatment.
+
+    `recipe` wins if given: that is the mixer, and the point of it is that it
+    is not one of the five. Otherwise `name` picks one of the fixed chains.
 
     Anything unusable -- an unknown name, "clean", a chunk too short to filter
     -- hands the audio back untouched. A treatment is a decoration; it must
     never be the reason nothing is spoken.
     """
-    handler = TREATMENTS.get(name)
-    if handler is None or len(audio) < MIN_SAMPLES:
+    if len(audio) < MIN_SAMPLES:
         return audio
     try:
-        return handler(audio, rate)
+        if recipe and any(float(v or 0.0) > 0.02 for v in recipe.values()):
+            return cook(audio, rate, recipe)
+        handler = TREATMENTS.get(name)
+        return audio if handler is None else handler(audio, rate)
     except Exception:
         return audio
 
