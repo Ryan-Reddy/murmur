@@ -8,3 +8,6 @@ build/
 *.spec
 integrations/claude-code/*.log
 integrations/claude-code/*.state.json
+
+# Tied to a Partner Center account, not to the code.
+packaging/identity.json

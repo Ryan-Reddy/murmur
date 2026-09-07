@@ -1,0 +1,15 @@
+{
+  "_comment": [
+    "Copy to identity.json and fill in from Partner Center > your app >",
+    "Product management > Product identity. identity.json is gitignored,",
+    "because the publisher string is tied to your account.",
+    "",
+    "name:      'Package/Identity/Name' on that page, e.g. 12345Reddy.Murmur",
+    "publisher: 'Package/Identity/Publisher', the CN= string. NOT your name.",
+    "version:   four numbers. The Store requires the last one to be 0, and",
+    "           refuses any upload whose version is not higher than the last."
+  ],
+  "name": "00000Publisher.Murmur",
+  "publisher": "CN=00000000-0000-0000-0000-000000000000",
+  "version": "1.0.0.0"
+}

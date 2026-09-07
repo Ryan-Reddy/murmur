@@ -111,7 +111,7 @@ machine can be offline forever.
 Afterwards, **`Murmur.cmd`** is the thing to double-click — it puts up the
 reddy.world banner, starts Murmur, and closes itself while Murmur stays in the
 tray. The desktop and startup shortcuts both point at it, so the banner shows on
-every sign-in. The banner lives in `assetsanner.txt` — the figlet is lifted
+every sign-in. The banner lives in `assets\banner.txt` — the figlet is lifted
 verbatim from the [reddy.world](https://github.com/Ryan-Reddy/reddy.world)
 README, so edit that file directly if it should say something else.
 
@@ -232,11 +232,19 @@ both raise a `Notification` as well, so you'd hear everything twice. If
 Murmur isn't running the hook connects to nothing and stays silent; every
 spoken line is also logged to `claude_notify.log` next to the script.
 
+## Microsoft Store
+
+`.\package.ps1` builds `dist\Murmur.msix` for submission. The reason to
+bother is that **Microsoft signs it**, which removes the SmartScreen warning
+without a certificate of your own. [STORE.md](STORE.md) is the whole process:
+the account, the two identity strings, the `runFullTrust` justification, and
+the custom-licence step that GPL-3.0 needs (the same route VLC takes).
+
 ## Standalone build (no Python needed)
 
 ```
 venv\Scripts\python.exe -m pip install pyinstaller
-.uild.ps1
+.\build.ps1
 ```
 
 That regenerates the icon and splash, runs PyInstaller with them plus the

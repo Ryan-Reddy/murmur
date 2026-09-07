@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!--
+  MSIX manifest for the Microsoft Store build.
+
+  Two fields must match what Partner Center reserved for you, exactly, or the
+  upload is rejected with an identity mismatch. package.ps1 substitutes them
+  from packaging/identity.json so they are not hand-edited on every build:
+
+    __IDENTITY_NAME__       e.g. 12345Reddy.Murmur      (Package/Identity/Name)
+    __IDENTITY_PUBLISHER__  e.g. CN=ABCD1234-...        (Package/Identity/Publisher)
+
+  Both are on the Product Identity page in Partner Center. The Publisher is a
+  CN= string, not your name — your name is PublisherDisplayName below, which
+  is the one people actually read.
+-->
+
+<Package
+    xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+    xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+    xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+    xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+    IgnorableNamespaces="uap uap5 rescap">
+
+  <Identity
+      Name="__IDENTITY_NAME__"
+      Publisher="__IDENTITY_PUBLISHER__"
+      Version="__VERSION__"
+      ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Murmur</DisplayName>
+    <!-- The name under the app in the Store. Yours, not a company's. -->
+    <PublisherDisplayName>Ryan Reddy</PublisherDisplayName>
+    <Logo>assets\StoreLogo.png</Logo>
+    <Description>Reads your selection aloud, anywhere on Windows, fully offline.</Description>
+  </Properties>
+
+  <Dependencies>
+    <!-- 10.0.17763 (1809) is the first build with the uap5 StartupTask
+         extension, which is the only supported way for a packaged app to
+         start with Windows. -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0"
+                        MaxVersionTested="10.0.22621.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-GB" />
+  </Resources>
+
+  <Applications>
+    <Application Id="Murmur" Executable="Murmur\Murmur.exe"
+                 EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+          DisplayName="Murmur"
+          Description="Select text anywhere, press a key, and hear it read in a voice that runs on your own machine."
+          BackgroundColor="#191622"
+          Square150x150Logo="assets\Square150x150Logo.png"
+          Square44x44Logo="assets\Square44x44Logo.png">
+        <uap:DefaultTile
+            Wide310x150Logo="assets\Wide310x150Logo.png"
+            Square71x71Logo="assets\Square71x71Logo.png"
+            Square310x310Logo="assets\Square310x310Logo.png" />
+        <uap:SplashScreen Image="assets\SplashScreen.png" BackgroundColor="#191622" />
+      </uap:VisualElements>
+
+      <Extensions>
+        <!-- Replaces the Startup-folder shortcut, which a packaged app cannot
+             create. Ships disabled: Windows shows it in Settings > Apps >
+             Startup and the user turns it on. An app that switches itself on
+             at boot without being asked is the reason that page exists. -->
+        <uap5:Extension Category="windows.startupTask">
+          <uap5:StartupTask TaskId="MurmurStartup" Enabled="false"
+                            DisplayName="Murmur" />
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- Restricted, and the one that needs a sentence of justification at
+         submission: a PyInstaller desktop app is not a UWP app, and full trust
+         is what lets it run at all. Routinely granted for desktop bridge
+         packages; say what the app is and that it ships no service.
+
+         Deliberately NOT declared: internetClient. Murmur never opens a
+         socket outward — the model is on disk and the text-in port is bound
+         to 127.0.0.1. Asking for a capability you do not use is how a
+         listening-to-your-screen app looks, and this one is not that. -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>
