@@ -112,13 +112,38 @@ class BrokenFile(unittest.TestCase):
 
     def test_a_save_round_trips(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "Murmur" / "settings.json"
-            with mock.patch.object(murmur, "settings_path", lambda: path):
+            path = Path(tmp) / "cufflink" / "settings.json"
+            with mock.patch.object(murmur, "settings_home", lambda: path),                     mock.patch.object(murmur, "settings_path", lambda: path):
                 settings = murmur.load_settings()
                 settings["profiles"]["default"]["speed"] = 1.3
                 self.assertTrue(murmur.save_settings(settings))
                 self.assertEqual(
                     murmur.load_settings()["profiles"]["default"]["speed"], 1.3)
+
+    def test_settings_from_the_old_name_are_still_found(self):
+        """It was called Murmur before the Store; nobody should lose their
+        voices to a rename."""
+        with tempfile.TemporaryDirectory() as tmp:
+            new = Path(tmp) / "cufflink" / "settings.json"
+            old = Path(tmp) / "Murmur" / "settings.json"
+            old.parent.mkdir(parents=True)
+            old.write_text('{"profiles": {"default": {"speed": 1.45}}}',
+                           encoding="utf-8")
+            with mock.patch.object(murmur, "settings_home", lambda: new):
+                self.assertEqual(murmur.settings_path(), old)
+                self.assertEqual(
+                    murmur.load_settings()["profiles"]["default"]["speed"], 1.45)
+
+    def test_the_new_name_wins_once_it_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            new = Path(tmp) / "cufflink" / "settings.json"
+            old = Path(tmp) / "Murmur" / "settings.json"
+            for path, speed in ((old, 1.45), (new, 0.8)):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('{"profiles": {"default": {"speed": %s}}}' % speed,
+                                encoding="utf-8")
+            with mock.patch.object(murmur, "settings_home", lambda: new):
+                self.assertEqual(murmur.settings_path(), new)
 
     def _write_and_load(self, text):
         with tempfile.TemporaryDirectory() as tmp:

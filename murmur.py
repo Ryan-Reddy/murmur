@@ -1,4 +1,4 @@
-"""Murmur — reads your selection aloud, anywhere on Windows, fully offline.
+"""cufflink — reads your selection aloud, anywhere on Windows, fully offline.
 
 Select text in any app, then:
   Ctrl+Alt+M     read it (press again on a new selection to switch to it)
@@ -130,9 +130,28 @@ LEGACY_PROFILES = {name: _profile(name)
                    for name in ("veronica", "submarine", "agent")}
 
 
-def settings_path() -> Path:
+def settings_home() -> Path:
+    """Where settings are written. Always the current name."""
     base = os.environ.get("LOCALAPPDATA") or str(ROOT)
-    return Path(base) / "Murmur" / "settings.json"
+    return Path(base) / "cufflink" / "settings.json"
+
+
+def settings_path() -> Path:
+    """Where settings are read from.
+
+    The app was called Murmur until it reached the Store, where that name was
+    already taken. Anyone who used it before has a folder under the old name,
+    and silently starting from defaults would look like their settings had
+    been thrown away -- so the old file is still read when the new one is not
+    there yet. save_settings always writes the new one, which completes the
+    move the first time anything is saved.
+    """
+    current = settings_home()
+    if not current.exists():
+        previous = current.parent.parent / "Murmur" / "settings.json"
+        if previous.exists():
+            return previous
+    return current
 
 
 def load_settings() -> dict:
@@ -154,7 +173,7 @@ def load_settings() -> dict:
 
 def save_settings(settings: dict) -> bool:
     try:
-        path = settings_path()
+        path = settings_home()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
         return True
@@ -274,7 +293,7 @@ def raise_window(hwnd) -> bool:
 
 
 def already_running() -> bool:
-    ctypes.windll.kernel32.CreateMutexW(None, False, "MurmurTTS-single-instance")
+    ctypes.windll.kernel32.CreateMutexW(None, False, "cufflink-single-instance")
     return ctypes.windll.kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
 
 # ------------------------------------------------------------------ selection
@@ -431,7 +450,7 @@ def remember_load(seconds: float):
 
 def _estimate_file() -> Path:
     base = os.environ.get("LOCALAPPDATA") or str(ROOT)
-    return Path(base) / "Murmur" / "load-seconds"
+    return Path(base) / "cufflink" / "load-seconds"
 
 
 IMG_IDLE = make_icon_image((124, 92, 255, 255))     # purple
@@ -442,7 +461,7 @@ IMG_PAUSED = make_icon_image((255, 170, 60, 255))    # amber
 
 def main():
     if already_running():
-        print("Murmur is already running.")
+        print("cufflink is already running.")
         return
     ui_events: queue.Queue = queue.Queue()
     settings = load_settings()
@@ -880,7 +899,7 @@ def main():
         if pill["pinned"]:
             cancel_hide()
             if not pill["speaking"] and not pill["words"]:
-                show_sentence("Murmur is listening. " + HOTKEY_READ + " reads your selection.")
+                show_sentence("cufflink is listening. " + HOTKEY_READ + " reads your selection.")
             render_pill()
         else:
             render_pill()
@@ -1215,7 +1234,7 @@ def main():
         pystray.MenuItem("Quit", quit_app),
     )
     icon = pystray.Icon(
-        "murmur", IMG_IDLE, f"Murmur — {HOTKEY_READ} reads your selection", menu
+        "murmur", IMG_IDLE, f"cufflink — {HOTKEY_READ} reads your selection", menu
     )
 
     def control(line: str):
@@ -1375,15 +1394,24 @@ def main():
             return
         elapsed = time.perf_counter() - loading["since"]
         percent = min(99, int(elapsed / loading["estimate"] * 100))
-        set_reader(f"Warming up the voice\u2026   {percent}%")
-        place_pill()
+        # Padded to a fixed width, and only re-placed when the number actually
+        # changes. Unpadded, the text grew from "9%" to "10%" to "99%", which
+        # resized the pill; a resize reapplies the corner region, and
+        # SetWindowRgn with bRedraw erases the whole window to the class brush
+        # -- white -- before Tk repaints it. At one tick every 200 ms that is
+        # about fifty white flashes across a normal startup, and far more when
+        # the model is slow to load.
+        set_reader(f"Warming up the voice\u2026   {percent:3d}%")
+        if percent != loading.get("shown"):
+            loading["shown"] = percent
+            place_pill()
         root.after(200, tick_loading)
 
     def on_ready(seconds: float):
         loading["on"] = False
         remember_load(seconds)
         close_splash()
-        icon.title = f"Murmur — {HOTKEY_READ} reads your selection"
+        icon.title = f"cufflink — {HOTKEY_READ} reads your selection"
         start_text_server(speaker, control, profile_for)
         # Bound late and through lambdas: at startup `speaker` is still the
         # stand-in, and a bound method would keep pointing at it forever.
@@ -1395,7 +1423,7 @@ def main():
         keyboard.add_hotkey(HOTKEY_SLOWER, lambda: change_speed(-1))
         keyboard.add_hotkey(HOTKEY_SOURCE, go_to_source)
         print(f"Ready in {seconds:.1f}s. {HOTKEY_READ} = read selection.")
-        speaker.speak("Murmur is ready.")
+        speaker.speak("cufflink is ready.")
 
     def on_load_failed(message: str):
         loading["on"] = False
@@ -1404,7 +1432,7 @@ def main():
         place_pill()
         print(f"Model failed to load: {message}")
 
-    icon.title = "Murmur — warming up…"
+    icon.title = "cufflink — warming up…"
     icon.run_detached()
     threading.Thread(target=load_voice, daemon=True).start()
     root.after(80, poll_events)

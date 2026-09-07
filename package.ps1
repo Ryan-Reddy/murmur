@@ -88,13 +88,13 @@ your app > Product management > Product identity.
 "@
 }
 $identity = Get-Content $identityFile -Raw | ConvertFrom-Json
-foreach ($field in 'name', 'publisher', 'version') {
+foreach ($field in 'name', 'publisher', 'version', 'displayName') {
     if (-not $identity.$field) { throw "packaging\identity.json has no '$field'." }
 }
 if ($identity.version -notmatch '^\d+\.\d+\.\d+\.0$') {
     throw "Version must be four numbers ending in 0, e.g. 1.0.0.0 - the Store reserves the last field."
 }
-Good "$($identity.name)  $($identity.version)"
+Good "$($identity.displayName)  -  $($identity.name)  $($identity.version)"
 Note $identity.publisher
 
 # -- the app itself --------------------------------------------------------
@@ -134,6 +134,7 @@ Get-ChildItem $stagedAssets -Filter '*.scale-100.png' | ForEach-Object {
 
 $manifest = Get-Content (Join-Path $root 'packaging\AppxManifest.xml') -Raw
 $manifest = $manifest.Replace('__IDENTITY_NAME__', $identity.name)
+$manifest = $manifest.Replace('__DISPLAY_NAME__', $identity.displayName)
 $manifest = $manifest.Replace('__IDENTITY_PUBLISHER__', $identity.publisher)
 $manifest = $manifest.Replace('__VERSION__', $identity.version)
 Set-Content -LiteralPath (Join-Path $staging 'AppxManifest.xml') -Value $manifest -Encoding utf8

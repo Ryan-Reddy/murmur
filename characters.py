@@ -18,7 +18,7 @@ is that the icon and the pill appear straight away.
 # The keys never change -- they are what settings.json and ::voice use, and
 # they are the keys of voices.TREATMENTS.
 NAMES = {
-    "clean": ("Murmur", "plain, no colour"),
+    "clean": ("cufflink", "plain, no colour"),
     "bbc": ("Auntie", "the shipping forecast"),
     "veronica": ("Veronica", "offshore, after dark"),
     "submarine": ("Abbey", "tape, wound a little slack"),

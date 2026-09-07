@@ -9,6 +9,11 @@
 
     __IDENTITY_NAME__       e.g. 12345Reddy.Murmur      (Package/Identity/Name)
     __IDENTITY_PUBLISHER__  e.g. CN=ABCD1234-...        (Package/Identity/Publisher)
+    __DISPLAY_NAME__        the reserved name, exactly  (from displayName)
+
+  The display name has to equal a name you reserved, character for character,
+  or certification rejects the package. Driven from identity.json so it is one
+  field rather than four places in this file.
 
   Both are on the Product Identity page in Partner Center. The Publisher is a
   CN= string, not your name — your name is PublisherDisplayName below, which
@@ -29,7 +34,7 @@
       ProcessorArchitecture="x64" />
 
   <Properties>
-    <DisplayName>Murmur</DisplayName>
+    <DisplayName>__DISPLAY_NAME__</DisplayName>
     <!-- The name under the app in the Store. Yours, not a company's. -->
     <PublisherDisplayName>Ryan Reddy</PublisherDisplayName>
     <Logo>assets\StoreLogo.png</Logo>
@@ -52,7 +57,7 @@
     <Application Id="Murmur" Executable="Murmur\Murmur.exe"
                  EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
-          DisplayName="Murmur"
+          DisplayName="__DISPLAY_NAME__"
           Description="Select text anywhere, press a key, and hear it read in a voice that runs on your own machine."
           BackgroundColor="#191622"
           Square150x150Logo="assets\Square150x150Logo.png"
@@ -71,7 +76,7 @@
              at boot without being asked is the reason that page exists. -->
         <uap5:Extension Category="windows.startupTask">
           <uap5:StartupTask TaskId="MurmurStartup" Enabled="false"
-                            DisplayName="Murmur" />
+                            DisplayName="__DISPLAY_NAME__" />
         </uap5:Extension>
       </Extensions>
     </Application>

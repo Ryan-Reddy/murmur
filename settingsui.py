@@ -45,7 +45,7 @@ def _treatments():
 
         return characters.catalogue()
     except Exception:
-        return [("clean", "Murmur — plain, no colour")]
+        return [("clean", "cufflink — plain, no colour")]
 
 
 def _ingredients():
@@ -126,7 +126,7 @@ class _Window:
         self.loading = False
 
         self.top = tk.Toplevel(root)
-        self.top.title("Murmur — voices")
+        self.top.title("cufflink — voices")
         self.top.configure(bg=BG)
         self.top.resizable(False, False)
         self.top.protocol("WM_DELETE_WINDOW", self.close)

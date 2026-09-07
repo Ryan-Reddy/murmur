@@ -4,12 +4,18 @@
     "Product management > Product identity. identity.json is gitignored,",
     "because the publisher string is tied to your account.",
     "",
-    "name:      'Package/Identity/Name' on that page, e.g. 12345Reddy.Murmur",
-    "publisher: 'Package/Identity/Publisher', the CN= string. NOT your name.",
-    "version:   four numbers. The Store requires the last one to be 0, and",
-    "           refuses any upload whose version is not higher than the last."
+    "name:        'Package/Identity/Name' on that page, e.g. RyanReddy.cufflink",
+    "displayName: a name you reserved for the product, character for character.",
+    "             Certification rejects a package whose DisplayName is not one",
+    "             of them, and reserved names are first come first served -- do",
+    "             not assume the obvious one is free.",
+    "publisher:   'Package/Identity/Publisher', the CN= string. NOT your name;",
+    "             your name is PublisherDisplayName, which is in the manifest.",
+    "version:     four numbers. The Store requires the last one to be 0, and",
+    "             refuses any upload whose version is not higher than the last."
   ],
-  "name": "00000Publisher.Murmur",
+  "name": "00000Publisher.YourApp",
+  "displayName": "Your App",
   "publisher": "CN=00000000-0000-0000-0000-000000000000",
   "version": "1.0.0.0"
 }
