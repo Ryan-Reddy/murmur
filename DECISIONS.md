@@ -149,6 +149,27 @@ Between passes: a 660 Hz chime at 10% under a raised-cosine envelope — a tone
 that starts at full amplitude clicks — then 1.1 s of quiet. The flag is read at
 the *end* of each pass, so it can be flipped mid-read.
 
+## How the pill is drawn
+
+Three steps of attention rather than two: what has been read is a mid tone,
+the word being spoken is warm white on a soft tint, and what is still to come is
+dim. The old highlight was solid violet under white, which stamped the current
+word rather than lighting it, and read and current were both near-white so the
+distinction between them was invisible anyway.
+
+Rounded corners come from clipping the window to a region — Tk cannot do it, and
+a sharp-cornered rectangle floating over an OS whose every other surface is
+rounded reads as a debug window. It has to be reapplied on every resize, since
+the region is measured in pixels.
+
+The ground is warm: a deep indigo with red left in it, and off-white text rather
+than blue-white, so something that sits on screen while you read feels lamplit
+instead of clinical. The volume bars stay muted until the pointer is on them —
+they were the loudest thing on a row where volume is a secondary control.
+
+`⏸` and `▶` are rendered as emoji by Windows, each in a little rounded box of
+its own, so the play control is drawn with `❚❚` and `▸` instead.
+
 ## The pill waits for you
 
 It used to vanish 0.6 s after a read, which is no use if you were reaching for

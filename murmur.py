@@ -56,9 +56,19 @@ LINGER_AFTER_SPEECH = 4000
 LINGER_AFTER_TOUCH = 120_000   # once you have used it, assume you may again
 LINGER_TOAST = 2000            # a setting changed while nothing is being read
 
-# Pill palette.
-BG, FG, MUTED = "#1e1b2e", "#e8e4ff", "#8f87b8"
-ACCENT, GREEN, AMBER = "#7c5cff", "#34c77b", "#ffaa3c"
+# Pill palette. Warm rather than cold: the ground is a deep indigo with some
+# red left in it, and the text is an off-white rather than a blue-white, so a
+# thing that sits on screen while you read feels lamplit instead of clinical.
+BG = "#191622"          # deep, slightly warm charcoal-violet
+EDGE = "#2b2539"        # a hairline lighter than the ground, for the rim
+FG = "#c3bad6"          # what has already been read: present, not shouting
+MUTED = "#7b7391"       # what has not been read yet, and idle controls
+ACCENT = "#a98bff"      # a softer violet than the old one
+TRACK = "#7a63c0"       # the progress hairline, dimmer than the accent
+TINT = "#463a68"        # the current word sits on this, not on solid accent
+NOW = "#fff4e6"         # and is warm white, which reads as lit rather than
+GREEN = "#74d3a4"       # inverted
+AMBER = "#f0b273"
 
 # Localhost text-in port: other local apps (e.g. ryans-assistant) send UTF-8
 # text here and it plays through the same pill + hotkey controls.
@@ -68,6 +78,28 @@ if getattr(sys, "frozen", False):
     ROOT = Path(sys.executable).parent  # packaged: models/ sits next to Murmur.exe
 else:
     ROOT = Path(__file__).parent
+
+
+def round_corners(window, radius: int = 16):
+    """Give a borderless window rounded corners.
+
+    Tk has no way to do this; Windows does, by clipping the window to a region.
+    It has to be redone whenever the window resizes, since the region is in
+    pixels. Without it a sharp-cornered rectangle floats over an OS whose every
+    other surface is rounded, and reads as a debug window.
+    """
+    try:
+        window.update_idletasks()
+        width, height = window.winfo_width(), window.winfo_height()
+        if width <= 1 or height <= 1:
+            return
+        hwnd = ctypes.windll.user32.GetParent(window.winfo_id()) or window.winfo_id()
+        region = ctypes.windll.gdi32.CreateRoundRectRgn(
+            0, 0, width + 1, height + 1, radius * 2, radius * 2
+        )
+        ctypes.windll.user32.SetWindowRgn(hwnd, region, True)
+    except Exception:
+        pass
 
 
 def already_running() -> bool:
@@ -340,22 +372,35 @@ def main():
     root.attributes("-alpha", 0.95)
     root.configure(bg=BG)
 
-    shell = tk.Frame(root, bg=BG, padx=2, pady=2)
-    shell.pack()
+    # A hairline rim: one pixel of a lighter colour around the whole thing,
+    # which is what stops it reading as a hole cut in the desktop.
+    rim = tk.Frame(root, bg=EDGE)
+    rim.pack(fill="both", expand=True)
+    shell = tk.Frame(rim, bg=BG)
+    shell.pack(fill="both", expand=True, padx=1, pady=1)
 
     # The sentence being spoken, with the current word lit as it is reached.
     reader = tk.Text(
-        shell, height=4, width=58, wrap="word", relief="flat", cursor="arrow",
-        bg=BG, fg=MUTED, font=("Segoe UI", 10), padx=14, pady=10,
-        highlightthickness=0, borderwidth=0, spacing3=3, takefocus=0,
+        shell, height=3, width=52, wrap="word", relief="flat", cursor="arrow",
+        bg=BG, fg=MUTED, font=("Segoe UI", 11), padx=20, pady=16,
+        highlightthickness=0, borderwidth=0, spacing1=1, spacing3=7,
+        takefocus=0,
     )
+    # Three weights, so attention runs read -> reading -> to come without
+    # anything shouting: soft white behind, warm white on a tint at the word
+    # being spoken, dim ahead of it.
     reader.tag_configure("said", foreground=FG)
-    reader.tag_configure("now", foreground="#ffffff", background=ACCENT)
+    reader.tag_configure("now", foreground=NOW, background=TINT)
     reader.config(state="disabled")
     reader.pack(fill="x")
 
+    # A two-pixel line under the text: where you are in the whole selection.
+    # It is the only moving thing when the pill is otherwise still.
+    progress = tk.Canvas(shell, height=2, bg=BG, highlightthickness=0)
+    progress.pack(fill="x", padx=20, pady=(0, 2))
+
     controls = tk.Frame(shell, bg=BG)
-    controls.pack(fill="x", padx=12, pady=(0, 9))
+    controls.pack(fill="x", padx=14, pady=(6, 12))
 
     def touched():
         """Any deliberate interaction keeps the pill up for a while, so a second
@@ -426,7 +471,7 @@ def main():
         widget.bind("<Leave>", lambda _e: widget.config(fg=widget.rest))
         return explain(widget, tip)
 
-    play_btn = chip(controls, "⏸", lambda: speaker.toggle_pause(),
+    play_btn = chip(controls, "\u275a\u275a", lambda: speaker.toggle_pause(),
                     tip=f"Pause or resume  ({HOTKEY_PAUSE}).  "
                         "Clicking the text does the same.",
                     font=("Segoe UI", 12), pad=8)
@@ -434,7 +479,7 @@ def main():
 
     slower_btn = chip(controls, "−", lambda: change_speed(-1),
                       tip=f"Slower  ({HOTKEY_SLOWER})", pad=9)
-    slower_btn.pack(side="left", padx=(10, 0))
+    slower_btn.pack(side="left", padx=(14, 0))
     speed_hud = tk.Label(controls, text="1.0×", fg=FG, bg=BG,
                          font=("Segoe UI", 9), padx=2, pady=3, width=5)
     speed_hud.pack(side="left")
@@ -447,24 +492,30 @@ def main():
     # 📌, so they drew as empty boxes on the control row.
     volume_icon = tk.Label(controls, text="♪", fg=MUTED, bg=BG,
                            font=("Segoe UI", 9), padx=6, pady=3)
-    volume_icon.pack(side="left", padx=(10, 0))
+    volume_icon.pack(side="left", padx=(14, 0))
     explain(volume_icon, "Click to mute or unmute")
     BARS = 7
     volume_bar = tk.Canvas(controls, width=BARS * 8, height=16, bg=BG,
                            highlightthickness=0, cursor="hand2")
+    volume_bar.hot = False
     volume_bar.pack(side="left", pady=3)
     explain(volume_bar, "Volume: click or drag a bar, or roll the wheel over it")
+    for widget in (volume_bar, volume_icon):
+        widget.bind("<Enter>", lambda _e: (setattr(volume_bar, "hot", True),
+                                           volume_icon.config(fg=FG), render_volume()), add="+")
+        widget.bind("<Leave>", lambda _e: (setattr(volume_bar, "hot", False),
+                                           volume_icon.config(fg=MUTED), render_volume()), add="+")
 
     repeat_btn = chip(controls, "↻", lambda: toggle_repeat(),
                       tip="Repeat: read it again until you stop it, with a "
                           "chime between", pad=8)
-    repeat_btn.pack(side="left", padx=(10, 0))
+    repeat_btn.pack(side="left", padx=(14, 0))
 
     select_btn = chip(controls, "⇱ select", lambda: toggle_select_mode(),
                       tip=f"Select mode  ({HOTKEY_SELECTMODE}): read every new "
                           "selection as you make it. Leave it off in terminals.",
                       pad=8)
-    select_btn.pack(side="left", padx=(6, 0))
+    select_btn.pack(side="left", padx=(14, 0))
 
     close_btn = chip(controls, "✕", close_pill,
                      tip="Stop and put this away",
@@ -479,17 +530,20 @@ def main():
 
     pill = {"sentence": "", "paused": False, "speaking": False,
             "words": [], "volume": 1.0, "pinned": False, "muted": 0.0,
-            "pos": None, "dismissed": False, "helping": False}
+            "pos": None, "dismissed": False, "helping": False, "at": 0}
 
     # --- volume -----------------------------------------------------------
     def render_volume():
         volume_bar.delete("all")
         for i in range(BARS):
             lit = (i + 1) / BARS <= pill["volume"] + 1e-9
-            height = 5 + i * 1.6
+            height = 4 + i * 1.5
+            # Muted unless it is being used: volume is a secondary control and
+            # was previously the loudest thing on the row.
             volume_bar.create_rectangle(
-                i * 8 + 1, 15 - height, i * 8 + 6, 15,
-                fill=ACCENT if lit else "#3a3550", width=0,
+                i * 8 + 1, 15 - height, i * 8 + 5, 15,
+                fill=(ACCENT if volume_bar.hot else MUTED) if lit else EDGE,
+                width=0,
             )
 
     def set_volume(level: float, announce: bool = True):
@@ -538,18 +592,29 @@ def main():
         pill["words"] = spans
         reader.config(state="disabled")
 
+    def render_progress():
+        progress.delete("all")
+        total = len(pill["words"])
+        if not total or not pill["speaking"]:
+            return
+        width = max(progress.winfo_width(), 1)
+        done = (pill["at"] + 1) / total
+        progress.create_rectangle(0, 0, int(width * done), 2, fill=TRACK, width=0)
+
     def highlight_word(index: int):
         reader.tag_remove("now", "1.0", "end")
         if not (0 <= index < len(pill["words"])):
             return
+        pill["at"] = index
         start, stop = pill["words"][index]
         reader.tag_add("said", "1.0", start)
         reader.tag_add("now", start, stop)
         reader.see(start)  # long sentences scroll to keep the word in view
+        render_progress()
 
     # Kept short enough to fit the four wrapped lines the reading area has.
     HELP = (
-        "⏸ pause   − + speed   ♪ volume   ↻ repeat   ⇱ read on select"
+        "❚❚ pause   − + speed   ♪ volume   ↻ repeat   ⇱ read on select"
         "\n"
         "◉ keep open   ✕ close   "
         f"·   {HOTKEY_READ} reads the selection   ·   {HOTKEY_STOP} stops"
@@ -641,7 +706,9 @@ def main():
     # --- layout -----------------------------------------------------------
     def render_pill():
         idle = not pill["speaking"]
-        play_btn.config(text="▶" if (pill["paused"] or idle) else "⏸")
+        # The variation selector asks for the plain glyph; without it Windows
+        # renders these as emoji, in a little rounded box of their own.
+        play_btn.config(text="\u25b8" if (pill["paused"] or idle) else "\u275a\u275a")
         select_btn.rest = GREEN if select_mode["on"] else MUTED
         select_btn.config(fg=select_btn.rest)
         repeat_btn.rest = GREEN if speaker.repeat else MUTED
@@ -683,6 +750,7 @@ def main():
         root.geometry(f"+{x}+{y}")
         if not pill["dismissed"]:
             root.deiconify()
+        round_corners(root)
 
     hide_timer = {"id": None}
 
