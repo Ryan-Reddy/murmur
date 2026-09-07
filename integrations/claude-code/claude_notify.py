@@ -2,7 +2,8 @@
 
 A Claude Code hook for the Notification, Stop and PostToolUse events. It
 reads the hook's JSON from stdin, turns it into one spoken line and posts
-it to Murmur's text-in port, so Murmur says things like:
+it to Murmur's text-in port in Murmur's "claude" voice, so an interruption
+sounds like one. Murmur says things like:
 
     my-project: Claude needs your permission to use Bash
     my-project: Claude is done. Tests pass. Want me to open the PR?
@@ -27,6 +28,10 @@ import time
 from pathlib import Path
 
 MURMUR_PORT = 52719
+# Claude gets a voice of its own, so an interruption is recognisable before
+# you have parsed a word of it. An older Murmur, or one whose settings have no
+# profile by this name, ignores the line and reads in the everyday voice.
+PROFILE = "claude"
 LOG = Path(__file__).with_name("claude_notify.log")
 STATE = Path(__file__).with_name("claude_notify.state.json")
 SUMMARY_CHARS = 300
@@ -70,7 +75,7 @@ def main():
     text = f"{project}: {message}" if project else message
     try:
         with socket.create_connection(("127.0.0.1", MURMUR_PORT), timeout=1) as conn:
-            conn.sendall(text.encode("utf-8"))
+            conn.sendall(f"::as {PROFILE}\n{text}".encode("utf-8"))
         _log(event, f"sent: {text}")
     except OSError:
         _log(event, f"dropped: {text}")

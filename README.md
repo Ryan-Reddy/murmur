@@ -175,15 +175,17 @@ so another app — or a test — can drive Murmur without touching the keyboard:
 | `::repeat on` / `off` / `toggle` | read it again until stopped |
 | `::close` | dismiss the pill |
 | `::source` | go back to the window the text came from |
-| `::voice clean` / `bbc` / `veronica` / `submarine` / `agent` | the everyday voice treatment |
-| `::as <profile>` + newline + text | speak that text in a named voice |
+| `::voice clean` / `bbc` / `veronica` / `submarine` / `agent` | who reads the everyday voice |
+| `::as <profile>` + newline + text | speak that text in a named profile |
+| `::settings` | open the settings window |
 | `::help on` / `off` / `toggle` | show what everything does |
 
 ## Speak Claude Code notifications
 
 `integrations/claude-code/claude_notify.py` is a Claude Code hook that posts
-to the text-in port, so Murmur says what your Claude Code sessions are up
-to — in every project, in Murmur's voice:
+to the text-in port as `::as claude`, so Murmur says what your Claude Code
+sessions are up to — in every project, in Auntie's voice rather than its own,
+so an interruption is recognisable before you have parsed a word of it:
 
 - *"my-project: Claude needs your permission to use Bash"* — the
   `Notification` event, whenever a session wants attention;
@@ -337,20 +339,41 @@ while running, because measuring the gaps means actually playing the audio.
 
 Kokoro gives a clean studio voice. A *treatment* puts it through something, so
 a notification and a paragraph you asked for are told apart by ear without
-either having to be louder. Pick one from the tray under **Voice**, or per
-message over the port.
+either having to be louder. They are offered as people, because nobody picks a
+voice by its compressor settings. Pick one from the tray under **Voice**, in
+the settings window under **Read by**, or per message over the port.
 
-| | |
-|---|---|
-| `clean` | untouched |
-| `bbc` | the station: even and measured, compression doing the work |
-| `veronica` | offshore AM — narrower, limited far harder because pirates competed on loudness, with a skywave fade and a noise floor |
-| `submarine` | not broadcast at all, **tape**: wow and flutter, double tracking, asymmetric saturation, a plate behind it |
-| `agent` | a concealed recorder — narrow at both ends, honking where a tiny earpiece resonates, an AGC brutal enough to catch a whisper across a room |
+| | | key |
+|---|---|---|
+| **Murmur** | plain, no colour — untouched | `clean` |
+| **Auntie** | the shipping forecast: even and measured, compression doing the work | `bbc` |
+| **Veronica** | offshore, after dark — narrower, limited far harder because pirates competed on loudness, with a skywave fade and a noise floor | `veronica` |
+| **Abbey** | tape, wound a little slack: wow and flutter, double tracking, asymmetric saturation, a plate behind it | `submarine` |
+| **The Informant** | a recorder in a coat pocket — narrow at both ends, honking where a tiny earpiece resonates, an AGC brutal enough to catch a whisper across a room | `agent` |
 
-Named profiles live in `%LOCALAPPDATA%\Murmur\settings.json` — each sets a
-voice blend, speed, treatment and how short the pauses run. Any app can ask for
-one:
+### Settings
+
+**Tray → Voices and settings…** (or `::settings`) opens a window with every
+dial a profile holds: the two voices and their mix, the speed, who reads it,
+and both pauses. **Hear it** speaks a sample in whatever the form currently
+says, saved or not — nothing touches the running voice until you press
+**Save**, so a bad guess costs nothing.
+
+### Profiles
+
+A *profile* is a job — what a voice is **for** — and which character reads it
+is one of the dials inside. Three ship, and you can add your own:
+
+| | reads | as |
+|---|---|---|
+| `default` | everything you ask for | Murmur |
+| `claude` | Claude Code's notifications | Auntie |
+| `clock` | the time, and anything else on a schedule | The Informant |
+
+They live in `%LOCALAPPDATA%\Murmur\settings.json` — each sets a voice blend,
+speed, treatment and how short the pauses run — and the settings window
+(**tray → Voices and settings…**, or `::settings`) edits them without going
+near the file. Any app can ask for one:
 
 ```python
 import socket
@@ -359,6 +382,22 @@ with socket.create_connection(("127.0.0.1", 52719)) as c:
 The tests have passed.".encode("utf-8"))
 ```
 
-A treatment costs about three hundredths of a second per second of audio, all
-of it in the chunk being rendered — measured at 0.30 s added before the first
-word on a short line, and less on the treatments with fewer stages.
+The chain runs once, on the audio the model has just rendered — it is not a
+second pass over anything. A style vector decides *who* is speaking; no style
+vector can make a voice arrive through a 3.5 kHz receiver with the limiter
+pinned, and there is nothing to pre-compute because the words are different
+every time.
+
+It is cheap where it counts. Measured on the shipped model:
+
+| | lead-in (1.34 s of audio) | full chunk (7.81 s) |
+|---|---|---|
+| synthesis | 909 ms | 3252 ms |
+| `bbc` | +14 ms (+2%) | +148 ms (+5%) |
+| `veronica` | +16 ms | +150 ms |
+| `submarine` | +18 ms | +188 ms |
+| `agent` | +21 ms (+2%) | +179 ms (+6%) |
+
+Only the lead-in touches how soon you hear the first word, and there it is
+about a fiftieth of the synthesis it follows. Every chunk after that is
+treated while the previous one is still playing.

@@ -11,6 +11,7 @@ Select text in any app, then:
 Runs as a tray icon (green while speaking). Quit from the tray menu.
 """
 
+import copy
 import ctypes
 import json
 import os
@@ -88,36 +89,44 @@ FADE_STEP = 0.34        # eased: each frame closes a third of what is left
 # text here and it plays through the same pill + hotkey controls.
 MURMUR_PORT = 52719
 
-# Named voices. Anything sending text can ask for one by name, so a
-# notification from Claude and a paragraph you asked for are told apart by ear
-# rather than by being louder. Edited in settings.json; these are the fallbacks.
+def _profile(treatment, speed=0.95, sentence=0.10, clause=0.03) -> dict:
+    """One profile, with a blend of its own.
+
+    Built rather than written out, because a shared literal would be shared
+    for real: edit one profile's voice in place and every profile that named
+    the same list changes with it. deepcopy does not save you -- it keeps
+    aliases that were already there.
+    """
+    return {
+        "blend": [list(pair) for pair in BLEND],
+        "speed": speed, "treatment": treatment,
+        "sentence_pause": sentence, "clause_pause": clause,
+    }
+
+
+# A profile is a job, not a character: what the voice is *for*. Which of the
+# characters in voices.NAMES reads it is one of the dials inside, and yours to
+# change. Anything sending text asks for a profile by name, so a notification
+# from Claude and a paragraph you asked for are told apart by ear rather than
+# by one of them being louder.
+#
+# Edited in settings.json and in the settings window; these are the fallbacks.
 DEFAULT_PROFILES = {
-    "default": {
-        "blend": [["bf_emma", 0.7], ["af_nicole", 0.3]],
-        "speed": 1.0, "treatment": "clean",
-        "sentence_pause": 0.25, "clause_pause": 0.10,
-    },
-    "claude": {
-        "blend": [["bf_emma", 0.7], ["af_nicole", 0.3]],
-        "speed": 0.95, "treatment": "bbc",
-        "sentence_pause": 0.10, "clause_pause": 0.03,
-    },
-    "veronica": {
-        "blend": [["bf_emma", 0.7], ["af_nicole", 0.3]],
-        "speed": 0.95, "treatment": "veronica",
-        "sentence_pause": 0.10, "clause_pause": 0.03,
-    },
-    "submarine": {
-        "blend": [["bf_emma", 0.7], ["af_nicole", 0.3]],
-        "speed": 0.95, "treatment": "submarine",
-        "sentence_pause": 0.10, "clause_pause": 0.03,
-    },
-    "agent": {
-        "blend": [["bf_emma", 0.7], ["af_nicole", 0.3]],
-        "speed": 0.95, "treatment": "agent",
-        "sentence_pause": 0.10, "clause_pause": 0.03,
-    },
+    # Everything you ask to be read. Plain, because you chose to listen to it.
+    "default": _profile("clean", speed=1.0, sentence=0.25, clause=0.10),
+    # Claude, interrupting. Auntie: even enough to land without alarming.
+    "claude": _profile("bbc"),
+    # The time, and anything else on a schedule. The Informant, because a
+    # voice from a coat pocket is the least like being spoken to.
+    "clock": _profile("agent"),
 }
+
+# Profiles that used to ship named after their treatment -- veronica,
+# submarine, agent -- back when picking a character meant making a profile for
+# it. The settings window does that job now, so an untouched one is only
+# clutter in the dropdown. One you actually edited is yours and is left alone.
+LEGACY_PROFILES = {name: _profile(name)
+                   for name in ("veronica", "submarine", "agent")}
 
 
 def settings_path() -> Path:
@@ -128,14 +137,17 @@ def settings_path() -> Path:
 def load_settings() -> dict:
     """Whatever is on disk, over the defaults. A broken file is ignored rather
     than fatal -- losing your settings should not cost you the voice."""
-    settings = {"profiles": {k: dict(v) for k, v in DEFAULT_PROFILES.items()}}
+    settings = {"profiles": copy.deepcopy(DEFAULT_PROFILES)}
     try:
         stored = json.loads(settings_path().read_text(encoding="utf-8"))
     except Exception:
         return settings
     for name, profile in (stored.get("profiles") or {}).items():
-        if isinstance(profile, dict):
-            settings["profiles"].setdefault(name, {}).update(profile)
+        if not isinstance(profile, dict):
+            continue
+        if profile == LEGACY_PROFILES.get(name):
+            continue  # shipped, never touched, no longer shipped
+        settings["profiles"].setdefault(name, {}).update(copy.deepcopy(profile))
     return settings
 
 
@@ -147,6 +159,7 @@ def save_settings(settings: dict) -> bool:
         return True
     except Exception:
         return False
+
 
 if getattr(sys, "frozen", False):
     ROOT = Path(sys.executable).parent  # packaged: models/ sits next to Murmur.exe
