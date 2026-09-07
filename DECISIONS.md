@@ -183,6 +183,19 @@ that clicking it does not steal focus from what you are reading. Attaching to th
 input queues of both the current foreground thread and the target's is the way
 round that; a bare SetForegroundWindow is ignored.
 
+## Controls are not text
+
+The design pass gave everything one dim colour, and the buttons went with it.
+Measured against the ground: the idle controls sat at **3.99:1**, under the
+4.5:1 small text needs, and a disabled control at **1.21:1** was not subdued but
+invisible.
+
+Dimming *text* says something -- it is what marks the words not yet read.
+Dimming a **control** says nothing; it only makes it hard to find. So they have
+their own three tones now, none of which is the text ramp: 7.3:1 at rest,
+near-white under the pointer, and a genuinely visible 3.2:1 when there is
+nothing to click.
+
 ## The pill waits for you
 
 It used to vanish 0.6 s after a read, which is no use if you were reaching for

@@ -64,7 +64,13 @@ LINGER_TOAST = 2000            # a setting changed while nothing is being read
 BG = "#191622"          # deep, slightly warm charcoal-violet
 EDGE = "#2b2539"        # a hairline lighter than the ground, for the rim
 FG = "#c3bad6"          # what has already been read: present, not shouting
-MUTED = "#7b7391"       # what has not been read yet, and idle controls
+MUTED = "#7b7391"       # what has not been read yet -- dim here means something
+# Controls are not text: dimming them says nothing, it just makes them hard to
+# find. MUTED measured 3.99:1 against the ground, under the 4.5:1 small text
+# needs, and the disabled state was 1.21:1 -- invisible rather than subdued.
+CONTROL = "#aaa1c4"     # 7.3:1 -- legible at a glance
+CONTROL_HOT = "#efe9fb" # under the pointer
+CONTROL_OFF = "#6b6483" # nothing to click: dimmed, but still there
 ACCENT = "#a98bff"      # a softer violet than the old one
 TRACK = "#7a63c0"       # the progress hairline, dimmer than the accent
 TINT = "#463a68"        # the current word sits on this, not on solid accent
@@ -545,17 +551,17 @@ def main():
         widget.bind("<Leave>", lambda _e: clear_hint(), add="+")
         return widget
 
-    def chip(parent, text, command, tip=None, font=("Segoe UI", 10), pad=7):
+    def chip(parent, text, command, tip=None, font=("Segoe UI", 11), pad=7):
         """A label that behaves like a flat button."""
         # pady 7 rather than 3: at 3 these were ~12x20 px, which is a poor
         # target even before the pill starts hiding itself.
         widget = tk.Label(
-            parent, text=text, fg=MUTED, bg=BG, font=font,
+            parent, text=text, fg=CONTROL, bg=BG, font=font,
             padx=pad, pady=7, cursor="hand2",
         )
-        widget.rest = MUTED
+        widget.rest = CONTROL
         widget.bind("<Button-1>", lambda _e: (command(), touched()))
-        widget.bind("<Enter>", lambda _e: widget.config(fg=FG))
+        widget.bind("<Enter>", lambda _e: widget.config(fg=CONTROL_HOT))
         widget.bind("<Leave>", lambda _e: widget.config(fg=widget.rest))
         return explain(widget, tip)
 
@@ -568,8 +574,8 @@ def main():
     slower_btn = chip(controls, "−", lambda: change_speed(-1),
                       tip=f"Slower  ({HOTKEY_SLOWER})", pad=9)
     slower_btn.pack(side="left", padx=(14, 0))
-    speed_hud = tk.Label(controls, text="1.0×", fg=FG, bg=BG,
-                         font=("Segoe UI", 9), padx=2, pady=3, width=5)
+    speed_hud = tk.Label(controls, text="1.0×", fg=CONTROL_HOT, bg=BG,
+                         font=("Segoe UI", 10), padx=2, pady=3, width=5)
     speed_hud.pack(side="left")
     explain(speed_hud, "Speed. Click to go back to 1.0x, or roll the wheel.")
     faster_btn = chip(controls, "+", lambda: change_speed(+1),
@@ -578,8 +584,8 @@ def main():
 
     # Plain BMP symbols rather than emoji: Segoe UI has no glyph for 🔊, 🔁 or
     # 📌, so they drew as empty boxes on the control row.
-    volume_icon = tk.Label(controls, text="♪", fg=MUTED, bg=BG,
-                           font=("Segoe UI", 9), padx=6, pady=3)
+    volume_icon = tk.Label(controls, text="♪", fg=CONTROL, bg=BG,
+                           font=("Segoe UI", 11), padx=6, pady=3)
     volume_icon.pack(side="left", padx=(14, 0))
     explain(volume_icon, "Click to mute or unmute")
     BARS = 7
@@ -590,9 +596,9 @@ def main():
     explain(volume_bar, "Volume: click or drag a bar, or roll the wheel over it")
     for widget in (volume_bar, volume_icon):
         widget.bind("<Enter>", lambda _e: (setattr(volume_bar, "hot", True),
-                                           volume_icon.config(fg=FG), render_volume()), add="+")
+                                           volume_icon.config(fg=CONTROL_HOT), render_volume()), add="+")
         widget.bind("<Leave>", lambda _e: (setattr(volume_bar, "hot", False),
-                                           volume_icon.config(fg=MUTED), render_volume()), add="+")
+                                           volume_icon.config(fg=CONTROL), render_volume()), add="+")
 
     source_btn = chip(controls, "↩", lambda: go_to_source(),
                       tip=f"Go back to where the text came from  ({HOTKEY_SOURCE})",
@@ -804,19 +810,19 @@ def main():
         # The variation selector asks for the plain glyph; without it Windows
         # renders these as emoji, in a little rounded box of their own.
         play_btn.config(text="\u25b8" if (pill["paused"] or idle) else "\u275a\u275a")
-        select_btn.rest = GREEN if select_mode["on"] else MUTED
+        select_btn.rest = GREEN if select_mode["on"] else CONTROL
         select_btn.config(fg=select_btn.rest)
-        repeat_btn.rest = GREEN if speaker.repeat else MUTED
+        repeat_btn.rest = GREEN if speaker.repeat else CONTROL
         repeat_btn.config(fg=repeat_btn.rest)
         has_source = bool(source["hwnd"])
-        source_btn.rest = MUTED if has_source else EDGE
+        source_btn.rest = CONTROL if has_source else CONTROL_OFF
         source_btn.config(fg=source_btn.rest, cursor="hand2" if has_source else "arrow")
-        pin_btn.rest = AMBER if pill["pinned"] else MUTED
+        pin_btn.rest = AMBER if pill["pinned"] else CONTROL
         pin_btn.config(fg=pin_btn.rest)
         # The one control most people want is brighter than the rest.
-        play_btn.rest = FG
-        play_btn.config(fg=FG)
-        help_btn.rest = ACCENT if pill["helping"] else MUTED
+        play_btn.rest = CONTROL_HOT     # the one most people reach for
+        play_btn.config(fg=CONTROL_HOT)
+        help_btn.rest = ACCENT if pill["helping"] else CONTROL
         help_btn.config(fg=help_btn.rest)
         place_pill()
 
