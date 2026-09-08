@@ -195,6 +195,12 @@ class _Window:
                   lambda row: self._slider(row, self.clause_pause, 0.0, 0.25,
                                            0.01, lambda v: f"{float(v):.2f}s"))
 
+        self._heading(body, "Integrations")
+        self._row(body, "Claude Code", self._claude_toggle,
+                  hint="Speaks what Claude Code is doing while you work in "
+                       "another window. Edits ~/.claude/settings.json, keeping "
+                       "whatever else is in it.")
+
         self.note.pack(fill="x", pady=(18, 0))
 
         buttons = tk.Frame(body, bg=BG)
@@ -439,6 +445,42 @@ class _Window:
             text=f"Saved “{name}”." if saved
             else f"“{name}” is live, but the settings file could not "
                  "be written.")
+
+    # -- integrations --------------------------------------------------------
+
+    def _claude_toggle(self, parent):
+        """A switch for the Claude Code hook, or an explanation of why not."""
+        self.claude = tk.Label(parent, bg=PANEL, fg=FG, font=("Segoe UI", 10),
+                               padx=14, pady=6, anchor="w")
+        self.claude.bind("<Button-1>", lambda _e: self._flip_claude())
+        self._show_claude()
+        return self.claude
+
+    def _show_claude(self):
+        import claudehook
+
+        state = claudehook.status()
+        looks = {
+            "on": ("On — click to turn off", ACCENT, BG, "hand2"),
+            "off": ("Off — click to turn on", PANEL, FG, "hand2"),
+            "no-claude-code": ("Claude Code not found", PANEL, MUTED, "arrow"),
+            "unreadable": ("Its settings file is unreadable", PANEL, MUTED, "arrow"),
+        }
+        text, background, foreground, cursor = looks[state]
+        self.claude.config(text=text, bg=background, fg=foreground, cursor=cursor)
+        self.claude.state = state
+
+    def _flip_claude(self):
+        import claudehook
+
+        if self.claude.state not in ("on", "off"):
+            self._say(None)
+            return
+        ok, message = (claudehook.disable() if self.claude.state == "on"
+                       else claudehook.enable())
+        self._show_claude()
+        self._resting_note = message
+        self.note.config(text=message, fg=MUTED if ok else "#f0b273")
 
     def close(self):
         _open["window"] = None

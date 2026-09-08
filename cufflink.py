@@ -1441,4 +1441,11 @@ def main():
 
 
 if __name__ == "__main__":
+    # Packaged, there is no interpreter for Claude Code to invoke, so the exe
+    # stands in for one. Checked before anything heavy is imported: a hook
+    # runs on every tool call and must not pay for a tray icon.
+    if "--claude-hook" in sys.argv:
+        import claudehook
+
+        raise SystemExit(claudehook.run_as_hook())
     main()
