@@ -724,6 +724,19 @@ def main():
         widget.bind("<Leave>", lambda _e: clear_hint(), add="+")
         return widget
 
+    def icon_font(size):
+        """Windows ships a pushpin in its icon fonts. Segoe UI does not, which
+        is the entire reason the pin has been a circle: there was no pin to
+        draw. Fluent first (Windows 11), MDL2 behind it (Windows 10), and the
+        old placeholder if neither is installed."""
+        from tkinter import font as tkfont
+
+        available = set(tkfont.families())
+        for family in ("Segoe Fluent Icons", "Segoe MDL2 Assets"):
+            if family in available:
+                return (family, size)
+        return None
+
     def chip(parent, text, command, tip=None, font=("Segoe UI", 11), pad=7):
         """A label that behaves like a flat button."""
         # pady 7 rather than 3: at 3 these were ~12x20 px, which is a poor
@@ -803,8 +816,10 @@ def main():
                      tip="Stop and put this away",
                      font=("Segoe UI", 10, "bold"), pad=7)
     close_btn.pack(side="right")
-    pin_btn = chip(chrome, "◉", lambda: toggle_pin(),
-                   tip="Keep this on screen instead of letting it hide", pad=7)
+    pins = icon_font(11)
+    pin_btn = chip(chrome, "" if pins else "◉", lambda: toggle_pin(),
+                   tip="Keep this on screen instead of letting it hide",
+                   font=pins or ("Segoe UI", 11), pad=7)
     pin_btn.pack(side="right")
 
     pill = {"sentence": "", "paused": False, "speaking": False,
