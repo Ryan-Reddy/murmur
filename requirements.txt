@@ -5,3 +5,5 @@ pyperclip
 keyboard
 pystray
 pillow
+faster-whisper
+PyAudioWPatch
