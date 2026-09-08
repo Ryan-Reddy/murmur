@@ -1,15 +1,15 @@
 @echo off
-rem Starts Murmur, and says hello properly while it does.
+rem Starts cufflink, and says hello properly while it does.
 rem
 rem This is what the desktop and startup shortcuts point at, so the banner
-rem shows on every sign-in. It closes itself once Murmur is on its feet --
-rem Murmur keeps running in the tray.
+rem shows on every sign-in. It closes itself once cufflink is on its feet --
+rem cufflink keeps running in the tray.
 
-title Murmur
+title cufflink
 
 if not exist "%~dp0venv\Scripts\pythonw.exe" (
     echo.
-    echo   Murmur is not set up on this machine yet.
+    echo   cufflink is not set up on this machine yet.
     echo   Run Install.cmd once, then use this again.
     echo.
     pause
@@ -24,7 +24,7 @@ cls
 
 type "%~dp0assets\banner.txt"
 
-start "" "%~dp0venv\Scripts\pythonw.exe" "%~dp0murmur.py"
+start "" "%~dp0venv\Scripts\pythonw.exe" "%~dp0cufflink.py"
 
 echo.
 echo                      Starting up. Look for the purple speaker in the tray,

@@ -1,10 +1,10 @@
 <#
-    Sets up Murmur on a fresh Windows machine.
+    Sets up cufflink on a fresh Windows machine.
 
     Clone the repo, right-click this file and pick "Run with PowerShell" (or run
     it from a terminal). It creates the virtual environment, installs the
     dependencies, downloads the two Kokoro model files -- which are far too big
-    for git, so they are not in the clone -- and offers to start Murmur with
+    for git, so they are not in the clone -- and offers to start cufflink with
     Windows.
 
     Safe to run again: anything already in place is left alone.
@@ -12,16 +12,16 @@
 
 [CmdletBinding()]
 param(
-    # Skip the "start Murmur when I sign in" question and just do it.
+    # Skip the "start cufflink when I sign in" question and just do it.
     [switch] $Autostart,
     # Re-download the models even if they are already here and intact.
     [switch] $ForceModels,
     # Never ask anything -- for scripted installs and for testing.
     [switch] $Unattended,
-    # Set everything up but do not start Murmur at the end.
+    # Set everything up but do not start cufflink at the end.
     [switch] $NoLaunch,
-    # Where to put Murmur when this is run straight from the web.
-    [string] $InstallDir = (Join-Path $HOME 'Murmur')
+    # Where to put cufflink when this is run straight from the web.
+    [string] $InstallDir = (Join-Path $HOME 'cufflink')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,7 +29,7 @@ $ErrorActionPreference = 'Stop'
 # refuses.
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$REPO = 'https://github.com/Ryan-Reddy/murmur'
+$REPO = 'https://github.com/Ryan-Reddy/cufflink'
 $RELEASE = 'https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0'
 $MODELS = @(
     @{ Name = 'kokoro-v1.0.onnx'; Bytes = 325532387
@@ -48,11 +48,11 @@ function Warn ($m) { Write-Host "  $m" -ForegroundColor Yellow }
 # there is no project next to us yet. Fetch it, then hand over to the copy that
 # lands there -- which takes the normal path below.
 $here = if ($PSCommandPath) { Split-Path -Parent $PSCommandPath } else { $null }
-if (-not $here -or -not (Test-Path (Join-Path $here 'murmur.py'))) {
+if (-not $here -or -not (Test-Path (Join-Path $here 'cufflink.py'))) {
     # The banner belongs to the real run, which starts once this hands over.
-    Step "Fetching Murmur into $InstallDir"
+    Step "Fetching cufflink into $InstallDir"
 
-    if (Test-Path (Join-Path $InstallDir 'murmur.py')) {
+    if (Test-Path (Join-Path $InstallDir 'cufflink.py')) {
         Good 'Already downloaded'
         if ((Test-Path (Join-Path $InstallDir '.git')) -and
             (Get-Command git -ErrorAction SilentlyContinue)) {
@@ -66,8 +66,8 @@ if (-not $here -or -not (Test-Path (Join-Path $here 'murmur.py'))) {
     } else {
         # No git on this machine: GitHub will hand us a zip of the branch.
         Say 'No git here, taking the zip instead...'
-        $zip = Join-Path $env:TEMP 'murmur-main.zip'
-        $stage = Join-Path $env:TEMP "murmur-unpack-$PID"
+        $zip = Join-Path $env:TEMP 'cufflink-main.zip'
+        $stage = Join-Path $env:TEMP "cufflink-unpack-$PID"
         $progress = $ProgressPreference
         try {
             $ProgressPreference = 'SilentlyContinue'
@@ -76,7 +76,7 @@ if (-not $here -or -not (Test-Path (Join-Path $here 'murmur.py'))) {
         Expand-Archive $zip $stage -Force
         $parent = Split-Path $InstallDir
         if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-        Move-Item (Join-Path $stage 'murmur-main') $InstallDir
+        Move-Item (Join-Path $stage 'cufflink-main') $InstallDir
         Remove-Item $zip, $stage -Recurse -Force -ErrorAction SilentlyContinue
         Good 'Downloaded'
     }
@@ -90,7 +90,7 @@ $modelDir = Join-Path $root 'models'
 $venv = Join-Path $root 'venv'
 $pythonw = Join-Path $venv 'Scripts\pythonw.exe'
 
-Write-Host "`nMurmur setup" -ForegroundColor Cyan
+Write-Host "`ncufflink setup" -ForegroundColor Cyan
 Say "Reads your selected text aloud, offline. Nothing leaves this machine."
 Say $root
 
@@ -203,39 +203,39 @@ foreach ($model in $MODELS) {
 Step '4/4  Shortcuts'
 
 function New-Shortcut ($linkPath, $description) {
-    # Points at Murmur.cmd rather than pythonw so the banner shows on every
-    # launch, including at sign-in. The cmd closes itself; Murmur stays in the
+    # Points at cufflink.cmd rather than pythonw so the banner shows on every
+    # launch, including at sign-in. The cmd closes itself; cufflink stays in the
     # tray.
     $shell = New-Object -ComObject WScript.Shell
     $link = $shell.CreateShortcut($linkPath)
-    $link.TargetPath = Join-Path $root 'Murmur.cmd'
+    $link.TargetPath = Join-Path $root 'cufflink.cmd'
     $link.WorkingDirectory = $root
     $link.Description = $description
-    $icon = Join-Path $root 'assets\murmur.ico'
+    $icon = Join-Path $root 'assets\cufflink.ico'
     if (Test-Path $icon) { $link.IconLocation = $icon }
     $link.Save()
 }
 
-$desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Murmur.lnk'
+$desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'cufflink.lnk'
 New-Shortcut $desktop 'Read the selected text aloud'
 Good 'Desktop shortcut created'
 
 $wantsAutostart = $Autostart
 if (-not $wantsAutostart -and -not $Unattended) {
-    $answer = Read-Host '  Start Murmur automatically when you sign in? [Y/n]'
+    $answer = Read-Host '  Start cufflink automatically when you sign in? [Y/n]'
     $wantsAutostart = $answer -notmatch '^\s*n'
 }
 if ($wantsAutostart) {
-    $startup = Join-Path ([Environment]::GetFolderPath('Startup')) 'Murmur.lnk'
+    $startup = Join-Path ([Environment]::GetFolderPath('Startup')) 'cufflink.lnk'
     New-Shortcut $startup 'Read the selected text aloud'
-    Good 'Murmur will start with Windows'
+    Good 'cufflink will start with Windows'
 } else {
     Say 'Skipped autostart -- launch it from the desktop shortcut.'
 }
 
 # --- done ------------------------------------------------------------------
 Write-Host "`nReady." -ForegroundColor Green
-Say 'Murmur lives in the system tray (a purple speaker, green while reading).'
+Say 'cufflink lives in the system tray (a purple speaker, green while reading).'
 Say ''
 Say '  Ctrl+Alt+M       read whatever text is selected'
 Say '  Ctrl+Alt+Space   pause / resume'
@@ -247,11 +247,11 @@ $launch = $true
 if ($NoLaunch) {
     $launch = $false
 } elseif (-not $Unattended) {
-    $launch = (Read-Host "`n  Start Murmur now? [Y/n]") -notmatch '^\s*n'
+    $launch = (Read-Host "`n  Start cufflink now? [Y/n]") -notmatch '^\s*n'
 }
 if ($launch) {
     Start-Process -FilePath $pythonw `
-        -ArgumentList ('"' + (Join-Path $root 'murmur.py') + '"') -WorkingDirectory $root
+        -ArgumentList ('"' + (Join-Path $root 'cufflink.py') + '"') -WorkingDirectory $root
     Good 'Starting -- watch for the tray icon.'
 }
 if (-not $Unattended) { Read-Host "`nPress Enter to close" }

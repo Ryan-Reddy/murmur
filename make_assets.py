@@ -75,7 +75,7 @@ def splash() -> Image.Image:
                 continue
         return ImageFont.load_default()
 
-    draw.text((156, 66), "Murmur", font=font(34, bold=True), fill=FG)
+    draw.text((156, 66), "cufflink", font=font(34, bold=True), fill=FG)
     draw.text((158, 110), "warming up the voice…", font=font(14), fill=MUTED)
     return img
 
@@ -97,9 +97,9 @@ def wide(width: int, height: int) -> Image.Image:
     except OSError:
         face = ImageFont.load_default()
     text_left = left + mark_size + int(width * 0.045)
-    box = draw.textbbox((0, 0), "Murmur", font=face)
+    box = draw.textbbox((0, 0), "cufflink", font=face)
     draw.text((text_left, (height - (box[3] - box[1])) // 2 - box[1]),
-              "Murmur", font=face, fill=FG)
+              "cufflink", font=face, fill=FG)
     return img
 
 
@@ -145,10 +145,10 @@ def store_assets(into: Path) -> int:
 if __name__ == "__main__":
     ASSETS.mkdir(exist_ok=True)
     sizes = [16, 24, 32, 48, 64, 128, 256]
-    icon(256).save(ASSETS / "murmur.ico", sizes=[(s, s) for s in sizes])
-    icon(256).save(ASSETS / "murmur.png")
+    icon(256).save(ASSETS / "cufflink.ico", sizes=[(s, s) for s in sizes])
+    icon(256).save(ASSETS / "cufflink.png")
     splash().save(ASSETS / "splash.png")
-    for name in ("murmur.ico", "murmur.png", "splash.png"):
+    for name in ("cufflink.ico", "cufflink.png", "splash.png"):
         print(f"  wrote assets/{name}  ({(ASSETS / name).stat().st_size:,} bytes)")
 
     count = store_assets(ASSETS / "store")

@@ -9,7 +9,7 @@
 
         winget install Microsoft.WindowsSDK.10.0.22621
 
-    Produces dist\Murmur.msix. That file is what you upload to Partner Center;
+    Produces dist\cufflink.msix. That file is what you upload to Partner Center;
     Microsoft signs it on the way through, which is what makes the SmartScreen
     warning go away -- the thing a certificate of your own would cost about
     EUR 300 a year to fix, and would not fix immediately even then.
@@ -23,14 +23,14 @@ param(
     # Sign with a self-signed certificate so the package can be installed on
     # this machine for testing. Never for submission -- the Store signs it.
     [switch] $SelfSign,
-    # Rebuild the PyInstaller output even if dist\Murmur already exists.
+    # Rebuild the PyInstaller output even if dist\cufflink already exists.
     [switch] $Rebuild
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $staging = Join-Path $root 'build\msix'
-$msix = Join-Path $root 'dist\Murmur.msix'
+$msix = Join-Path $root 'dist\cufflink.msix'
 
 function Step ($m) { Write-Host "`n$m" -ForegroundColor Cyan }
 function Good ($m) { Write-Host "  $m" -ForegroundColor Green }
@@ -100,13 +100,13 @@ Note $identity.publisher
 # -- the app itself --------------------------------------------------------
 
 Step '3/6  Application payload'
-$built = Join-Path $root 'dist\Murmur'
-if ($Rebuild -or -not (Test-Path (Join-Path $built 'Murmur.exe'))) {
+$built = Join-Path $root 'dist\cufflink'
+if ($Rebuild -or -not (Test-Path (Join-Path $built 'cufflink.exe'))) {
     Note 'running build.ps1 (this takes a few minutes)'
     & (Join-Path $root 'build.ps1') -NoZip
     if ($LASTEXITCODE -ne 0) { throw 'build.ps1 failed.' }
 }
-if (-not (Test-Path (Join-Path $built 'Murmur.exe'))) { throw 'No dist\Murmur\Murmur.exe to package.' }
+if (-not (Test-Path (Join-Path $built 'cufflink.exe'))) { throw 'No dist\cufflink\cufflink.exe to package.' }
 Good "$([math]::Round((Get-ChildItem $built -Recurse | Measure-Object Length -Sum).Sum / 1MB)) MB"
 
 # -- lay it out ------------------------------------------------------------
@@ -115,7 +115,7 @@ Step '4/6  Staging'
 if (Test-Path $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
 New-Item -ItemType Directory -Path $staging -Force | Out-Null
 
-Copy-Item $built (Join-Path $staging 'Murmur') -Recurse
+Copy-Item $built (Join-Path $staging 'cufflink') -Recurse
 $stagedAssets = Join-Path $staging 'assets'
 New-Item -ItemType Directory -Path $stagedAssets -Force | Out-Null
 $storeAssets = Join-Path $root 'assets\store'
@@ -154,7 +154,7 @@ Step '5/6  Packing'
 New-Item -ItemType Directory -Path (Join-Path $root 'dist') -Force | Out-Null
 & $makeappx pack /d $staging /p $msix /o
 if ($LASTEXITCODE -ne 0) { throw 'makeappx failed.' }
-Good "dist\Murmur.msix is $([math]::Round((Get-Item $msix).Length / 1MB)) MB"
+Good "dist\cufflink.msix is $([math]::Round((Get-Item $msix).Length / 1MB)) MB"
 
 # -- optionally sign, for local testing only -------------------------------
 
@@ -172,25 +172,25 @@ if (-not $SelfSign) {
     if (-not $cert) {
         Note "creating a self-signed certificate for $($identity.publisher)"
         $cert = New-SelfSignedCertificate -Type Custom -Subject $identity.publisher `
-            -KeyUsage DigitalSignature -FriendlyName 'Murmur test signing' `
+            -KeyUsage DigitalSignature -FriendlyName 'cufflink test signing' `
             -CertStoreLocation 'Cert:\CurrentUser\My' `
             -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3', '2.5.29.19={text}')
     }
     $pfx = Join-Path $staging 'test.pfx'
-    $password = ConvertTo-SecureString -String 'murmur' -Force -AsPlainText
+    $password = ConvertTo-SecureString -String 'cufflink' -Force -AsPlainText
     Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $password | Out-Null
-    & $signtool sign /fd SHA256 /a /f $pfx /p 'murmur' $msix
+    & $signtool sign /fd SHA256 /a /f $pfx /p 'cufflink' $msix
     if ($LASTEXITCODE -ne 0) { throw 'signtool failed.' }
     Remove-Item -LiteralPath $pfx -Force
     Good 'signed with a test certificate'
     Note 'To install it here, trust the certificate once (elevated):'
-    Note "  Export-Certificate -Cert (Get-ChildItem Cert:\CurrentUser\My | ? Subject -eq '$($identity.publisher)') -FilePath murmur-test.cer"
-    Note '  Import-Certificate -FilePath murmur-test.cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople'
+    Note "  Export-Certificate -Cert (Get-ChildItem Cert:\CurrentUser\My | ? Subject -eq '$($identity.publisher)') -FilePath cufflink-test.cer"
+    Note '  Import-Certificate -FilePath cufflink-test.cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople'
     Note "  Add-AppxPackage '$msix'"
 }
 
 Write-Host "`nDone." -ForegroundColor Cyan
-Write-Host "  dist\Murmur.msix" -ForegroundColor Green
+Write-Host "  dist\cufflink.msix" -ForegroundColor Green
 if (-not $SelfSign) {
     Write-Host "  Upload at partner.microsoft.com/dashboard - see STORE.md for the rest." -ForegroundColor DarkGray
 }

@@ -1,4 +1,4 @@
-"""Measure what Murmur costs and how quickly it starts, into BENCHMARKS.md.
+"""Measure what cufflink costs and how quickly it starts, into BENCHMARKS.md.
 
     venv\\Scripts\\python.exe bench.py
 
@@ -58,7 +58,7 @@ def synth_cost(threads: int) -> dict:
     script = f'''
 import os, sys, time
 sys.path.insert(0, r"{ROOT}")
-os.environ["MURMUR_THREADS"] = "{threads}"
+os.environ["CUFFLINK_THREADS"] = "{threads}"
 from speaker import Speaker
 s = Speaker(r"{MODEL}", r"{VOICES}")
 s.kokoro.create("warm", voice=s.voice, speed=1.0)
@@ -115,7 +115,7 @@ def end_to_end() -> dict:
 
 
 def idle_cost() -> float:
-    """Whatever a running-but-silent Murmur costs, as a share of one core."""
+    """Whatever a running-but-silent cufflink costs, as a share of one core."""
     kernel32 = ctypes.WinDLL("kernel32")
 
     class FT(ctypes.Structure):

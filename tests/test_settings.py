@@ -2,7 +2,7 @@
 
     venv\\Scripts\\python.exe -m unittest discover -s tests -v
 
-murmur imports pystray and tkinter at module level, so these skip themselves
+cufflink imports pystray and tkinter at module level, so these skip themselves
 where those are missing rather than failing the whole run.
 """
 
@@ -17,12 +17,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 try:
-    import murmur
+    import cufflink
 
-    has_murmur = True
+    has_cufflink = True
 except Exception:  # pragma: no cover - headless CI
-    murmur = None
-    has_murmur = False
+    cufflink = None
+    has_cufflink = False
 
 
 class Stored:
@@ -32,28 +32,28 @@ class Stored:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"
             path.write_text(json.dumps(stored), encoding="utf-8")
-            with mock.patch.object(murmur, "settings_path", lambda: path):
-                return murmur.load_settings()
+            with mock.patch.object(cufflink, "settings_path", lambda: path):
+                return cufflink.load_settings()
 
 
-@unittest.skipUnless(has_murmur, "murmur needs a display and a tray")
+@unittest.skipUnless(has_cufflink, "cufflink needs a display and a tray")
 class Profiles(Stored, unittest.TestCase):
     """A profile is a job -- what the voice is for -- not a character."""
 
     def test_the_shipped_ones_are_jobs(self):
-        self.assertEqual(set(murmur.DEFAULT_PROFILES),
+        self.assertEqual(set(cufflink.DEFAULT_PROFILES),
                          {"default", "claude", "clock"})
 
     def test_every_profile_names_a_real_character(self):
         import voices
 
-        for name, profile in murmur.DEFAULT_PROFILES.items():
+        for name, profile in cufflink.DEFAULT_PROFILES.items():
             with self.subTest(profile=name):
                 self.assertIn(profile["treatment"], voices.TREATMENTS)
 
     def test_they_sound_different_from_each_other(self):
         """Telling them apart by ear is the entire point."""
-        treatments = [p["treatment"] for p in murmur.DEFAULT_PROFILES.values()]
+        treatments = [p["treatment"] for p in cufflink.DEFAULT_PROFILES.values()]
         self.assertEqual(len(set(treatments)), len(treatments))
 
     def test_the_defaults_are_not_shared_between_profiles(self):
@@ -62,21 +62,21 @@ class Profiles(Stored, unittest.TestCase):
         loaded = self._load({})
         loaded["profiles"]["default"]["blend"][0][0] = "changed"
         self.assertEqual(loaded["profiles"]["claude"]["blend"][0][0], "bf_emma")
-        self.assertEqual(murmur.DEFAULT_PROFILES["default"]["blend"][0][0],
+        self.assertEqual(cufflink.DEFAULT_PROFILES["default"]["blend"][0][0],
                          "bf_emma")
 
 
-@unittest.skipUnless(has_murmur, "murmur needs a display and a tray")
+@unittest.skipUnless(has_cufflink, "cufflink needs a display and a tray")
 class Legacy(Stored, unittest.TestCase):
     """veronica, submarine and agent used to ship as profiles of their own."""
 
     def test_an_untouched_one_is_dropped(self):
-        loaded = self._load({"profiles": dict(murmur.LEGACY_PROFILES)})
-        self.assertEqual(set(loaded["profiles"]), set(murmur.DEFAULT_PROFILES))
+        loaded = self._load({"profiles": dict(cufflink.LEGACY_PROFILES)})
+        self.assertEqual(set(loaded["profiles"]), set(cufflink.DEFAULT_PROFILES))
 
     def test_an_edited_one_is_kept(self):
         """It stopped being ours the moment it was changed."""
-        mine = dict(murmur.LEGACY_PROFILES["veronica"], speed=1.4)
+        mine = dict(cufflink.LEGACY_PROFILES["veronica"], speed=1.4)
         loaded = self._load({"profiles": {"veronica": mine}})
         self.assertEqual(loaded["profiles"]["veronica"]["speed"], 1.4)
 
@@ -91,20 +91,20 @@ class Legacy(Stored, unittest.TestCase):
                          "unmentioned keys keep their default")
 
 
-@unittest.skipUnless(has_murmur, "murmur needs a display and a tray")
+@unittest.skipUnless(has_cufflink, "cufflink needs a display and a tray")
 class BrokenFile(unittest.TestCase):
     """Losing your settings must not cost you the voice."""
 
     def test_no_file_gives_the_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "nothing" / "settings.json"
-            with mock.patch.object(murmur, "settings_path", lambda: path):
-                self.assertEqual(set(murmur.load_settings()["profiles"]),
-                                 set(murmur.DEFAULT_PROFILES))
+            with mock.patch.object(cufflink, "settings_path", lambda: path):
+                self.assertEqual(set(cufflink.load_settings()["profiles"]),
+                                 set(cufflink.DEFAULT_PROFILES))
 
     def test_unreadable_json_gives_the_defaults(self):
         loaded = self._write_and_load("{ this is not json")
-        self.assertEqual(set(loaded["profiles"]), set(murmur.DEFAULT_PROFILES))
+        self.assertEqual(set(loaded["profiles"]), set(cufflink.DEFAULT_PROFILES))
 
     def test_a_profile_that_is_not_a_dict_is_ignored(self):
         loaded = self._write_and_load('{"profiles": {"odd": "a string"}}')
@@ -113,12 +113,12 @@ class BrokenFile(unittest.TestCase):
     def test_a_save_round_trips(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "cufflink" / "settings.json"
-            with mock.patch.object(murmur, "settings_home", lambda: path),                     mock.patch.object(murmur, "settings_path", lambda: path):
-                settings = murmur.load_settings()
+            with mock.patch.object(cufflink, "settings_home", lambda: path),                     mock.patch.object(cufflink, "settings_path", lambda: path):
+                settings = cufflink.load_settings()
                 settings["profiles"]["default"]["speed"] = 1.3
-                self.assertTrue(murmur.save_settings(settings))
+                self.assertTrue(cufflink.save_settings(settings))
                 self.assertEqual(
-                    murmur.load_settings()["profiles"]["default"]["speed"], 1.3)
+                    cufflink.load_settings()["profiles"]["default"]["speed"], 1.3)
 
     def test_settings_from_the_old_name_are_still_found(self):
         """It was called Murmur before the Store; nobody should lose their
@@ -129,10 +129,10 @@ class BrokenFile(unittest.TestCase):
             old.parent.mkdir(parents=True)
             old.write_text('{"profiles": {"default": {"speed": 1.45}}}',
                            encoding="utf-8")
-            with mock.patch.object(murmur, "settings_home", lambda: new):
-                self.assertEqual(murmur.settings_path(), old)
+            with mock.patch.object(cufflink, "settings_home", lambda: new):
+                self.assertEqual(cufflink.settings_path(), old)
                 self.assertEqual(
-                    murmur.load_settings()["profiles"]["default"]["speed"], 1.45)
+                    cufflink.load_settings()["profiles"]["default"]["speed"], 1.45)
 
     def test_the_new_name_wins_once_it_exists(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -142,15 +142,15 @@ class BrokenFile(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text('{"profiles": {"default": {"speed": %s}}}' % speed,
                                 encoding="utf-8")
-            with mock.patch.object(murmur, "settings_home", lambda: new):
-                self.assertEqual(murmur.settings_path(), new)
+            with mock.patch.object(cufflink, "settings_home", lambda: new):
+                self.assertEqual(cufflink.settings_path(), new)
 
     def _write_and_load(self, text):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"
             path.write_text(text, encoding="utf-8")
-            with mock.patch.object(murmur, "settings_path", lambda: path):
-                return murmur.load_settings()
+            with mock.patch.object(cufflink, "settings_path", lambda: path):
+                return cufflink.load_settings()
 
 
 if __name__ == "__main__":

@@ -42,7 +42,7 @@ pyperclip = None
 
 # ------------------------------------------------------------------ config
 
-HOTKEY_READ = "ctrl+alt+m"  # M for Murmur (avoid alt+r combos: NVIDIA overlay)
+HOTKEY_READ = "ctrl+alt+m"  # M for cufflink (avoid alt+r combos: NVIDIA overlay)
 HOTKEY_PAUSE = "ctrl+alt+space"
 HOTKEY_STOP = "ctrl+alt+s"
 HOTKEY_SELECTMODE = "ctrl+alt+b"  # B for browse: read every new selection
@@ -87,7 +87,7 @@ FADE_STEP = 0.34        # eased: each frame closes a third of what is left
 
 # Localhost text-in port: other local apps (e.g. ryans-assistant) send UTF-8
 # text here and it plays through the same pill + hotkey controls.
-MURMUR_PORT = 52719
+CUFFLINK_PORT = 52719
 
 
 def _profile(treatment, speed=0.95, sentence=0.10, clause=0.03) -> dict:
@@ -182,7 +182,7 @@ def save_settings(settings: dict) -> bool:
 
 
 if getattr(sys, "frozen", False):
-    ROOT = Path(sys.executable).parent  # packaged: models/ sits next to Murmur.exe
+    ROOT = Path(sys.executable).parent  # packaged: models/ sits next to cufflink.exe
 else:
     ROOT = Path(__file__).parent
 
@@ -265,7 +265,7 @@ def foreground_window():
 def raise_window(hwnd) -> bool:
     """Bring a window back to the front.
 
-    Windows only lets the foreground process hand focus away, and Murmur is
+    Windows only lets the foreground process hand focus away, and cufflink is
     deliberately never the foreground -- the pill carries WS_EX_NOACTIVATE so
     clicking it does not steal focus. Attaching to the input queues of both the
     current foreground thread and the target's is the way round that.
@@ -337,9 +337,9 @@ def start_text_server(speaker, control, profile_for=None):
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            srv.bind(("127.0.0.1", MURMUR_PORT))
+            srv.bind(("127.0.0.1", CUFFLINK_PORT))
         except OSError:
-            print(f"Port {MURMUR_PORT} taken; text-in disabled.")
+            print(f"Port {CUFFLINK_PORT} taken; text-in disabled.")
             return
         srv.listen(2)
         while True:
@@ -557,7 +557,7 @@ def main():
 
     def toggle_select_mode():
         select_mode["on"] = not select_mode["on"]
-        # A WH_MOUSE_LL hook puts Murmur in the path of every mouse event on the
+        # A WH_MOUSE_LL hook puts cufflink in the path of every mouse event on the
         # desktop, and while it is busy synthesizing that shows up as laggy
         # input. Select mode is the only thing that wants clicks, so the hook
         # exists exactly as long as select mode does.
@@ -996,7 +996,7 @@ def main():
     def work_area():
         """The desktop minus the taskbar. Placing against the full screen
         height put the control row underneath the taskbar, where the clicks
-        went to the taskbar instead of to Murmur."""
+        went to the taskbar instead of to cufflink."""
         class RECT(ctypes.Structure):
             _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
                         ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
@@ -1113,7 +1113,7 @@ def main():
 
     # --- tray ---
     def release_hooks():
-        # The global keyboard and mouse hooks are the only things Murmur leaves
+        # The global keyboard and mouse hooks are the only things cufflink leaves
         # in other processes; drop them before anything slower.
         speaker.stop()
         try:
@@ -1234,14 +1234,14 @@ def main():
         pystray.MenuItem("Quit", quit_app),
     )
     icon = pystray.Icon(
-        "murmur", IMG_IDLE, f"cufflink — {HOTKEY_READ} reads your selection", menu
+        "cufflink", IMG_IDLE, f"cufflink — {HOTKEY_READ} reads your selection", menu
     )
 
     def control(line: str):
         """Commands arriving on the text-in port.
 
         Everything the hotkeys and the pill can do is reachable here, so other
-        apps -- and tests -- can drive Murmur without taking over the keyboard.
+        apps -- and tests -- can drive cufflink without taking over the keyboard.
 
             ::stop  ::pause  ::speed +1 | -1 | 1.25  ::volume 0.6
             ::select on | off | toggle  ::pin on | off | toggle

@@ -7,7 +7,7 @@
   upload is rejected with an identity mismatch. package.ps1 substitutes them
   from packaging/identity.json so they are not hand-edited on every build:
 
-    __IDENTITY_NAME__       e.g. 12345Reddy.Murmur      (Package/Identity/Name)
+    __IDENTITY_NAME__       e.g. RyanReddy.cufflink      (Package/Identity/Name)
     __IDENTITY_PUBLISHER__  e.g. CN=ABCD1234-...        (Package/Identity/Publisher)
     __DISPLAY_NAME__        the reserved name, exactly  (from displayName)
 
@@ -54,7 +54,7 @@
   </Resources>
 
   <Applications>
-    <Application Id="Murmur" Executable="Murmur\Murmur.exe"
+    <Application Id="cufflink" Executable="cufflink\cufflink.exe"
                  EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
           DisplayName="__DISPLAY_NAME__"
@@ -75,7 +75,7 @@
              Startup and the user turns it on. An app that switches itself on
              at boot without being asked is the reason that page exists. -->
         <uap5:Extension Category="windows.startupTask">
-          <uap5:StartupTask TaskId="MurmurStartup" Enabled="false"
+          <uap5:StartupTask TaskId="cufflinkStartup" Enabled="false"
                             DisplayName="__DISPLAY_NAME__" />
         </uap5:Extension>
       </Extensions>
@@ -88,7 +88,7 @@
          is what lets it run at all. Routinely granted for desktop bridge
          packages; say what the app is and that it ships no service.
 
-         Deliberately NOT declared: internetClient. Murmur never opens a
+         Deliberately NOT declared: internetClient. cufflink never opens a
          socket outward — the model is on disk and the text-in port is bound
          to 127.0.0.1. Asking for a capability you do not use is how a
          listening-to-your-screen app looks, and this one is not that. -->

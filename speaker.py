@@ -49,7 +49,7 @@ FALLBACK_RATE = 24000
 # almost nothing but heat. os.cpu_count() reports logical processors, hence the
 # halving. Capped at 16, because past that it stops paying for itself, and
 # floored at 2, below which synthesis stops keeping up with playback.
-# Override with MURMUR_THREADS.
+# Override with CUFFLINK_THREADS.
 def _default_threads() -> int:
     return max(2, min(16, (os.cpu_count() or 4) // 2))
 
@@ -157,7 +157,7 @@ class Speaker:
         on_word=None,
         on_pause=None,
     ):
-        threads = threads or int(os.environ.get("MURMUR_THREADS", 0) or _default_threads())
+        threads = threads or int(os.environ.get("CUFFLINK_THREADS", 0) or _default_threads())
         threads = max(1, min(threads, os.cpu_count() or 1))
         self.kokoro = Kokoro.from_session(
             _session(model_path, threads), str(voices_path)

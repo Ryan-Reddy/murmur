@@ -1,9 +1,9 @@
-"""Speak Claude Code's notifications through Murmur.
+"""Speak Claude Code's notifications through cufflink.
 
 A Claude Code hook for the Notification, Stop and PostToolUse events. It
 reads the hook's JSON from stdin, turns it into one spoken line and posts
-it to Murmur's text-in port in Murmur's "claude" voice, so an interruption
-sounds like one. Murmur says things like:
+it to cufflink's text-in port in cufflink's "claude" voice, so an interruption
+sounds like one. cufflink says things like:
 
     my-project: Claude needs your permission to use Bash
     my-project: Claude is done. Tests pass. Want me to open the PR?
@@ -14,7 +14,7 @@ handed and speaks its opening (markdown stripped, capped) plus its closing
 question, so you hear what's going on, not just that it stopped.
 PostToolUse fires after every tool call, so it is throttled: nothing until
 a turn has run TURN_WARMUP seconds, then at most every NARRATE_EVERY
-seconds per session, saying what Claude just did. If Murmur isn't running,
+seconds per session, saying what Claude just did. If cufflink isn't running,
 the connection fails and nothing is said. Every spoken call leaves a line
 in claude_notify.log next to this file, because a hook fails invisibly.
 Stdlib only — wire it up in ~/.claude/settings.json (see README)."""
@@ -27,9 +27,9 @@ import sys
 import time
 from pathlib import Path
 
-MURMUR_PORT = 52719
+CUFFLINK_PORT = 52719
 # Claude gets a voice of its own, so an interruption is recognisable before
-# you have parsed a word of it. An older Murmur, or one whose settings have no
+# you have parsed a word of it. An older cufflink, or one whose settings have no
 # profile by this name, ignores the line and reads in the everyday voice.
 PROFILE = "claude"
 LOG = Path(__file__).with_name("claude_notify.log")
@@ -74,7 +74,7 @@ def main():
     project = Path(data.get("cwd") or "").name
     text = f"{project}: {message}" if project else message
     try:
-        with socket.create_connection(("127.0.0.1", MURMUR_PORT), timeout=1) as conn:
+        with socket.create_connection(("127.0.0.1", CUFFLINK_PORT), timeout=1) as conn:
             conn.sendall(f"::as {PROFILE}\n{text}".encode("utf-8"))
         _log(event, f"sent: {text}")
     except OSError:

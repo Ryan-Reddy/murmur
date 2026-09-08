@@ -7,7 +7,7 @@ through two queues to be handed to nobody. Measured against an identical process
 with no hook, that costs about 8% of a core whenever the mouse is moving -- all
 day, whether or not select mode is on.
 
-Murmur only ever wants clicks. This hook ignores movement inside the callback,
+cufflink only ever wants clicks. This hook ignores movement inside the callback,
 where it is cheapest to ignore, and stops for real when select mode goes off.
 
     hook = MouseButtons(on_button)   # on_button("down"|"up"|"double", x, y)

@@ -1,9 +1,9 @@
-"""Answer Windows' session-end broadcast so Murmur never blocks a shutdown.
+"""Answer Windows' session-end broadcast so cufflink never blocks a shutdown.
 
-Murmur has no ordinary window: the pill is a borderless topmost widget that is
+cufflink has no ordinary window: the pill is a borderless topmost widget that is
 withdrawn most of the time, and everything else lives in the tray. When Windows
 logs off or shuts down it broadcasts WM_QUERYENDSESSION to top-level windows and
-waits for each to answer; with nothing listening, Murmur only gets torn down
+waits for each to answer; with nothing listening, cufflink only gets torn down
 after the timeout expires -- and meanwhile the user sees the "this app is
 preventing you from shutting down" screen. Worse, the global keyboard and mouse
 hooks stay installed the whole time, so input stays laggy while Windows waits.
@@ -35,7 +35,7 @@ kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 # Every one of these needs its types declared. Without them ctypes assumes a
 # C int return, and a module handle above 2^31 -- which ASLR hands out perhaps
 # half the time -- is silently truncated, so CreateWindowExW then fails with an
-# overflow and Murmur goes back to blocking shutdown. It worked when tested and
+# overflow and cufflink goes back to blocking shutdown. It worked when tested and
 # broke on a later launch, which is exactly what that looks like.
 user32.DefWindowProcW.restype = LRESULT
 user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, WPARAM, LPARAM]
@@ -87,7 +87,7 @@ def install(on_shutdown) -> None:
         def wndproc(hwnd, message, wparam, lparam):
             if message == WM_QUERYENDSESSION:
                 # Consent, but change nothing yet: another app may still veto
-                # the shutdown, and a Murmur left without its hooks would look
+                # the shutdown, and a cufflink left without its hooks would look
                 # alive in the tray while every hotkey silently did nothing.
                 return 1
             if message == WM_ENDSESSION and not wparam:
@@ -108,11 +108,11 @@ def install(on_shutdown) -> None:
         wndclass = WNDCLASS()
         wndclass.lpfnWndProc = proc
         wndclass.hInstance = kernel32.GetModuleHandleW(None)
-        wndclass.lpszClassName = "MurmurShutdownListener"
+        wndclass.lpszClassName = "cufflinkShutdownListener"
         if not user32.RegisterClassW(ctypes.byref(wndclass)):
             return
         hwnd = user32.CreateWindowExW(
-            0, wndclass.lpszClassName, "Murmur", 0, 0, 0, 0, 0,
+            0, wndclass.lpszClassName, "cufflink", 0, 0, 0, 0, 0,
             None, None, wndclass.hInstance, None,
         )
         if not hwnd:

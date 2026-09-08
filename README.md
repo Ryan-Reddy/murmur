@@ -1,11 +1,13 @@
-# Murmur
+# cufflink
+
+*Formerly Murmur — renamed for the Microsoft Store, where that name was already taken. The repository keeps its old name for now.*
 
 Reads any selected text aloud, anywhere on Windows, fully offline. Powered by
 [Kokoro-82M](https://github.com/thewh1teagle/kokoro-onnx) — nothing ever leaves
 your machine.
 
 Voice: 70% `bf_emma` + 30% `af_nicole` (British, sweet, a little raspy).
-Tweak the `BLEND` constant in `murmur.py` to taste.
+Tweak the `BLEND` constant in `cufflink.py` to taste.
 
 ## Hotkeys
 
@@ -69,8 +71,8 @@ The pill hides a moment after reading ends, but never while the pointer is on
 it, so there is time to reach a control. The tray icon is green while speaking,
 amber while paused.
 
-Select mode is the only thing that wants mouse events, so Murmur's mouse hook
-exists exactly as long as select mode does — with it off, Murmur is not in the
+Select mode is the only thing that wants mouse events, so cufflink's mouse hook
+exists exactly as long as select mode does — with it off, cufflink is not in the
 system's mouse input path at all.
 
 ## Install
@@ -81,13 +83,13 @@ One line in PowerShell, nothing to download first:
 irm https://raw.githubusercontent.com/Ryan-Reddy/murmur/main/install.ps1 | iex
 ```
 
-That fetches Murmur into `%USERPROFILE%\Murmur`, finds (or installs) Python,
+That fetches cufflink into `%USERPROFILE%\cufflink`, finds (or installs) Python,
 builds the virtual environment, downloads the voice model and sets up the
 shortcuts. It uses `git` when it is there and falls back to the source zip when
 it is not, so nothing has to be installed beforehand. To put it somewhere else:
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Ryan-Reddy/murmur/main/install.ps1))) -InstallDir D:\Murmur
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Ryan-Reddy/murmur/main/install.ps1))) -InstallDir D:\cufflink
 ```
 
 Or clone it yourself and double-click **`Install.cmd`**:
@@ -105,11 +107,11 @@ and checks them against a known SHA-256 before keeping them. It is safe to run
 again; anything already in place is left alone. `-Unattended` skips the
 questions, `-Autostart` answers the startup one with yes.
 
-That one download is the only time Murmur touches the network. After it, the
+That one download is the only time cufflink touches the network. After it, the
 machine can be offline forever.
 
-Afterwards, **`Murmur.cmd`** is the thing to double-click — it puts up the
-reddy.world banner, starts Murmur, and closes itself while Murmur stays in the
+Afterwards, **`cufflink.cmd`** is the thing to double-click — it puts up the
+reddy.world banner, starts cufflink, and closes itself while cufflink stays in the
 tray. The desktop and startup shortcuts both point at it, so the banner shows on
 every sign-in. The banner lives in `assets\banner.txt` — the figlet is lifted
 verbatim from the [reddy.world](https://github.com/Ryan-Reddy/reddy.world)
@@ -122,17 +124,17 @@ off the screen.
 ## Run
 
 ```
-venv\Scripts\python.exe murmur.py
+venv\Scripts\python.exe cufflink.py
 ```
 
 Model files live in `models/` (`kokoro-v1.0.onnx` + `voices-v1.0.bin`).
 
 ## CPU use
 
-Idle Murmur costs nothing measurable; all the work happens while it is actually
+Idle cufflink costs nothing measurable; all the work happens while it is actually
 speaking. ONNX Runtime would by default give the model one thread per core and
 let those threads spin-wait between operators, which on a 32-thread desktop
-burned 4.5 CPU-seconds per second of speech. Murmur turns the spinning off and
+burned 4.5 CPU-seconds per second of speech. cufflink turns the spinning off and
 sizes the pool to the machine — `max(2, min(16, logical // 2))`, which is the
 physical core count on most desktops — for about a third of the original energy.
 
@@ -140,7 +142,7 @@ Disabling the spinning is what recovered nearly all of that; the thread count
 barely moves total CPU, so it is free to spend on latency. Measured on a
 16-core/32-thread Threadripper: RTF 0.67 at 6 threads, 0.49 at 16, 0.47 at 32.
 The knee is at the physical core count — SMT adds almost nothing but heat —
-hence the halving, capped at 16 and floored at 2. `MURMUR_THREADS` overrides it.
+hence the halving, capped at 16 and floored at 2. `CUFFLINK_THREADS` overrides it.
 
 Nothing is heard until the first chunk has finished rendering, so a long opening
 sentence used to mean seconds of silence — 6.6 of them for a 137-character one.
@@ -154,7 +156,7 @@ which sounded like synthesis falling behind but was the sound device being
 reopened. One stream now serves a whole utterance: gaps went from 1.29s to
 0.23s.
 
-Set `MURMUR_THREADS` to trade back the other way — higher starts the first
+Set `CUFFLINK_THREADS` to trade back the other way — higher starts the first
 sentence sooner without costing much more total CPU, lower is gentler on a
 laptop. Below two threads synthesis stops keeping up with playback.
 
@@ -164,7 +166,7 @@ move its CPU time at all.
 
 ## Text-in port (voice service for other apps)
 
-While running, Murmur listens on `127.0.0.1:52719`. Any local app can send
+While running, cufflink listens on `127.0.0.1:52719`. Any local app can send
 UTF-8 text (close the connection to finish) and it plays with the full pill +
 pause/stop controls — this is how
 [ryans-assistant](https://github.com/Ryan-Reddy/ryans-assistant) speaks.
@@ -177,7 +179,7 @@ with socket.create_connection(("127.0.0.1", 52719)) as c:
 ```
 
 Anything starting with `::` is a command rather than something to read aloud,
-so another app — or a test — can drive Murmur without touching the keyboard:
+so another app — or a test — can drive cufflink without touching the keyboard:
 
 | Command | Does |
 |---|---|
@@ -199,7 +201,7 @@ so another app — or a test — can drive Murmur without touching the keyboard:
 ## Speak Claude Code notifications
 
 `integrations/claude-code/claude_notify.py` is a Claude Code hook that posts
-to the text-in port as `::as claude`, so Murmur says what your Claude Code
+to the text-in port as `::as claude`, so cufflink says what your Claude Code
 sessions are up to — in every project, in Auntie's voice rather than its own,
 so an interruption is recognisable before you have parsed a word of it:
 
@@ -229,12 +231,12 @@ events in `~/.claude/settings.json` (exec form: no shell, no quoting):
 
 Don't add it under `PermissionRequest` or `PreToolUse`/`AskUserQuestion`:
 both raise a `Notification` as well, so you'd hear everything twice. If
-Murmur isn't running the hook connects to nothing and stays silent; every
+cufflink isn't running the hook connects to nothing and stays silent; every
 spoken line is also logged to `claude_notify.log` next to the script.
 
 ## Microsoft Store
 
-`.\package.ps1` builds `dist\Murmur.msix` for submission. The reason to
+`.\package.ps1` builds `dist\cufflink.msix` for submission. The reason to
 bother is that **Microsoft signs it**, which removes the SmartScreen warning
 without a certificate of your own. [STORE.md](STORE.md) is the whole process:
 the account, the two identity strings, the `runFullTrust` justification, and
@@ -249,9 +251,9 @@ venv\Scripts\python.exe -m pip install pyinstaller
 
 That regenerates the icon and splash, runs PyInstaller with them plus the
 Windows version resource, copies `models\` next to the exe and zips the lot
-into `dist\Murmur-win64.zip` (365 MB). `-NoZip` stops before the slow part.
+into `dist\cufflink-win64.zip` (365 MB). `-NoZip` stops before the slow part.
 
-The recipient unzips anywhere and runs `Murmur.exe` — no install, no Python,
+The recipient unzips anywhere and runs `cufflink.exe` — no install, no Python,
 no network. A splash appears immediately while the 310 MB model is read (about
 four seconds warm, longer on the very first run when it comes off the disk
 cold), so the app never looks like it failed to start. A second launch is
@@ -281,7 +283,7 @@ same shape as the tray icon; run it after changing the look.
 
 ## Autostart
 
-Put a shortcut to `Murmur.exe` (or `venv\Scripts\pythonw.exe murmur.py` for
+Put a shortcut to `cufflink.exe` (or `venv\Scripts\pythonw.exe cufflink.py` for
 the dev copy) in `shell:startup`.
 
 ## Use in your own projects
@@ -315,7 +317,7 @@ appear before the model has loaded:
 
 | | |
 |---|---|
-| `murmur.py` | the tray, the pill, the hotkeys, the port |
+| `cufflink.py` | the tray, the pill, the hotkeys, the port |
 | `speaker.py` | synthesis and playback — no UI |
 | `voices.py` | the treatment chains and the mixer — numpy, ~700 ms |
 | `characters.py` | who the voices are: names only, no imports, ~3 ms |
@@ -328,7 +330,7 @@ appear before the model has loaded:
 
 ## Licence
 
-Murmur is [GPL-3.0](LICENSE). It has to be: it speaks through
+cufflink is [GPL-3.0](LICENSE). It has to be: it speaks through
 [espeak-ng](https://github.com/espeak-ng/espeak-ng) and
 [phonemizer](https://github.com/bootphon/phonemizer), both GPL-3.0, and the
 packaged build ships espeak-ng's DLL inside the exe.
@@ -390,7 +392,7 @@ the settings window under **Read by**, or per message over the port.
 
 | | | key |
 |---|---|---|
-| **Murmur** | plain, no colour — untouched | `clean` |
+| **cufflink** | plain, no colour — untouched | `clean` |
 | **Auntie** | the shipping forecast: even and measured, compression doing the work | `bbc` |
 | **Veronica** | offshore, after dark — narrower, limited far harder because pirates competed on loudness, with a skywave fade and a noise floor | `veronica` |
 | **Abbey** | tape, wound a little slack: wow and flutter, double tracking, asymmetric saturation, a plate behind it | `submarine` |
@@ -469,11 +471,11 @@ is one of the dials inside. Three ship, and you can add your own:
 
 | | reads | as |
 |---|---|---|
-| `default` | everything you ask for | Murmur |
+| `default` | everything you ask for | cufflink |
 | `claude` | Claude Code's notifications | Auntie |
 | `clock` | the time, and anything else on a schedule | The Informant |
 
-They live in `%LOCALAPPDATA%\Murmur\settings.json` — each sets a voice blend,
+They live in `%LOCALAPPDATA%\cufflink\settings.json` — each sets a voice blend,
 speed, treatment and how short the pauses run — and the settings window
 (**tray → Voices and settings…**, or `::settings`) edits them without going
 near the file. Any app can ask for one:

@@ -1,13 +1,13 @@
 <#
-    Build the standalone Murmur for Windows.
+    Build the standalone cufflink for Windows.
 
         venv\Scripts\python.exe -m pip install pyinstaller
         .\build.ps1
 
-    Produces dist\Murmur\Murmur.exe (with models\ beside it) and, unless you
-    pass -NoZip, dist\Murmur-win64.zip to hand to someone else.
+    Produces dist\cufflink\cufflink.exe (with models\ beside it) and, unless you
+    pass -NoZip, dist\cufflink-win64.zip to hand to someone else.
 
-    The recipient unzips anywhere and double-clicks Murmur.exe. No Python, no
+    The recipient unzips anywhere and double-clicks cufflink.exe. No Python, no
     install, no network.
 #>
 
@@ -20,8 +20,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $python = Join-Path $root 'venv\Scripts\python.exe'
-$dist = Join-Path $root 'dist\Murmur'
-$zip = Join-Path $root 'dist\Murmur-win64.zip'
+$dist = Join-Path $root 'dist\cufflink'
+$zip = Join-Path $root 'dist\cufflink-win64.zip'
 
 function Step ($m) { Write-Host "`n$m" -ForegroundColor Cyan }
 function Good ($m) { Write-Host "  $m" -ForegroundColor Green }
@@ -38,25 +38,37 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not generate the assets.' }
 Step '2/4  PyInstaller'
 Remove-Item (Join-Path $root 'build') -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $dist -Recurse -Force -ErrorAction SilentlyContinue
-& $python -m PyInstaller --noconfirm --noconsole --name Murmur `
-    --icon (Join-Path $root 'assets\murmur.ico') `
+& $python -m PyInstaller --noconfirm --noconsole --name cufflink `
+    --icon (Join-Path $root 'assets\cufflink.ico') `
     --splash (Join-Path $root 'assets\splash.png') `
     --version-file (Join-Path $root 'version_info.txt') `
     --collect-all espeakng_loader --collect-all phonemizer --collect-all kokoro_onnx `
-    (Join-Path $root 'murmur.py')
+    (Join-Path $root 'cufflink.py')
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed.' }
-Good 'Murmur.exe built'
+Good 'cufflink.exe built'
 
 Step '3/4  Voice model'
-# Frozen, Murmur reads models\ from beside the exe, so it ships next to it
+# Frozen, cufflink reads models\ from beside the exe, so it ships next to it
 # rather than inside the archive -- 338 MB does not want to be unpacked to a
 # temp folder on every launch.
-Copy-Item (Join-Path $root 'models') (Join-Path $dist 'models') -Recurse -Force
+#
+# Named files, not the whole folder. models\ is also where anything else in
+# this repo caches its own downloads, and copying it wholesale once put 1.4 GB
+# of unrelated speech-to-text weights into the package: 612 MB became 1823 MB
+# and nobody noticed until the MSIX came out at 1.6 GB.
+$modelFiles = @('kokoro-v1.0.onnx', 'voices-v1.0.bin')
+$modelDir = Join-Path $dist 'models'
+New-Item -ItemType Directory -Path $modelDir -Force | Out-Null
+foreach ($file in $modelFiles) {
+    $from = Join-Path $root "models\$file"
+    if (-not (Test-Path $from)) { throw "models\$file is missing." }
+    Copy-Item $from (Join-Path $modelDir $file) -Force
+}
 # The exe bundles espeak-ng and phonemizer, both GPL-3.0, so the licence has to
 # travel with the binary.
 Copy-Item (Join-Path $root 'LICENSE') (Join-Path $dist 'LICENSE.txt') -Force
 $mb = [math]::Round(((Get-ChildItem $dist -Recurse -File | Measure-Object Length -Sum).Sum / 1MB))
-Good "dist\Murmur is $mb MB"
+Good "dist\cufflink is $mb MB"
 
 if ($NoZip) {
     Step '4/4  Skipping the zip (-NoZip)'
@@ -66,9 +78,9 @@ if ($NoZip) {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     [System.IO.Compression.ZipFile]::CreateFromDirectory(
         $dist, $zip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
-    Good ("dist\Murmur-win64.zip is {0} MB" -f [math]::Round((Get-Item $zip).Length / 1MB))
+    Good ("dist\cufflink-win64.zip is {0} MB" -f [math]::Round((Get-Item $zip).Length / 1MB))
 }
 
 Write-Host "`nDone." -ForegroundColor Green
-Write-Host "  Unzip anywhere and run Murmur.exe. Windows will warn that it is"
+Write-Host "  Unzip anywhere and run cufflink.exe. Windows will warn that it is"
 Write-Host "  unsigned: More info -> Run anyway."
