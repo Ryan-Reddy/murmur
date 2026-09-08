@@ -81,6 +81,12 @@ NOW = "#fff4e6"         # and is warm white, which reads as lit rather than
 GREEN = "#74d3a4"       # inverted
 AMBER = "#f0b273"
 
+# The brand, sampled from assets/cufflink-hero.png so the drawn pieces and the
+# illustration are the same colours rather than nearly the same.
+BRAND_NAVY = (9, 28, 54, 255)      # #091c36
+BRAND_CREAM = (252, 244, 232, 255) # #fcf4e8
+BRAND_MINT = (127, 228, 207, 255)  # #7fe4cf
+
 OPAQUE = 0.97           # the pill's settled opacity
 FADE_MS = 16            # a frame, near enough
 FADE_STEP = 0.34        # eased: each frame closes a third of what is left
@@ -371,18 +377,28 @@ def start_text_server(speaker, control, profile_for=None):
 # ------------------------------------------------------------------ tray icons
 
 def make_icon_image(color) -> Image.Image:
-    # Drawn at 4x and downsampled: PIL does not antialias, and a 64 px circle
-    # drawn directly has visibly stepped edges in the tray.
+    """The tray mark: a cufflink seen face-on, two discs and a post.
+
+    The same shape make_assets.py generates for every small icon, so the tray,
+    the taskbar and the Store tile are one mark rather than three. The state
+    colours the discs; the ground stays navy, because a tray icon that changes
+    its silhouette is harder to find than one that changes its colour.
+
+    Drawn at 4x and downsampled: PIL does not antialias, and a 64 px shape
+    drawn directly has visibly stepped edges in the tray.
+    """
     scale, size = 4, 64
     big = size * scale
     img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.ellipse([2 * scale, 2 * scale, 62 * scale, 62 * scale], fill=color)
-    for x, h in ((20, 10), (30, 20), (40, 14)):
-        d.rounded_rectangle(
-            [x * scale, (32 - h) * scale, (x + 6) * scale, (32 + h) * scale],
-            radius=3 * scale, fill="white",
-        )
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle([0, 0, big - 1, big - 1], radius=int(big * 0.22),
+                           fill=BRAND_NAVY)
+    radius, middle = big * 0.20, big * 0.5
+    for centre in (big * 0.30, big * 0.70):
+        draw.ellipse([centre - radius, middle - radius,
+                      centre + radius, middle + radius], fill=color)
+    draw.rectangle([big * 0.30, middle - big * 0.075,
+                    big * 0.70, middle + big * 0.075], fill=color)
     return img.resize((size, size), Image.LANCZOS)
 
 
@@ -453,9 +469,9 @@ def _estimate_file() -> Path:
     return Path(base) / "cufflink" / "load-seconds"
 
 
-IMG_IDLE = make_icon_image((124, 92, 255, 255))     # purple
-IMG_SPEAKING = make_icon_image((52, 199, 123, 255))  # green
-IMG_PAUSED = make_icon_image((255, 170, 60, 255))    # amber
+IMG_IDLE = make_icon_image(BRAND_CREAM)              # resting
+IMG_SPEAKING = make_icon_image((127, 228, 207, 255))  # mint, and it is talking
+IMG_PAUSED = make_icon_image((255, 190, 110, 255))    # amber, and it is not
 
 # ------------------------------------------------------------------ app
 
