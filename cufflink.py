@@ -925,7 +925,11 @@ def main():
     # has moved, so nothing but the number crosses the wire while nobody is
     # talking -- and none of it crosses at all outside listen mode.
     listen = {"version": -1, "recording": False, "status": "",
-              "levels": {}, "lines": [], "notes": [], "job": None}
+              "levels": {}, "lines": [], "notes": [], "job": None,
+              # True while a background ask is out. Without it a slow answer
+              # would let the next tick start a second one, and a stalled
+              # meeting process would collect a thread every 500 ms.
+              "asking": False}
 
     # --- volume -----------------------------------------------------------
     def render_volume():
@@ -1246,6 +1250,21 @@ def main():
 
     # --- listen mode: the same pill, doing the other job -------------------
 
+    def meeting_listening(timeout: float = 0.35) -> bool:
+        """Is anything holding the meeting port?
+
+        A connect and an immediate close. It does not wait for the process to
+        answer, which matters because the thing that answers is the thread
+        doing the transcribing -- ask it while it is busy and a running
+        process looks like a dead one.
+        """
+        try:
+            with socket.create_connection(("127.0.0.1", MEETING_PORT),
+                                          timeout=timeout):
+                return True
+        except OSError:
+            return False
+
     def meeting_says(command: str, timeout: float = 0.6):
         """Ask the meeting process something. None when it is not running."""
         try:
@@ -1309,36 +1328,71 @@ def main():
         listen["job"] = None
         if pill["mode"] != "listen":
             return
-        if not root.winfo_ismapped():
-            listen["job"] = root.after(2500, poll_meeting)
-            return
-        answer = meeting_says("::state", timeout=0.4)
-        if answer is None:
+        # Slower when nobody can see it: the timer stays, the asking mostly
+        # stops. On a laptop that is the difference between a background app
+        # and a background app you notice.
+        every = 500 if root.winfo_ismapped() else 2500
+        if not listen["asking"]:
+            listen["asking"] = True
+            threading.Thread(target=ask_meeting, args=(listen["version"],),
+                             daemon=True).start()
+        listen["job"] = root.after(every, poll_meeting)
+
+    def ask_meeting(known_version: int):
+        """Talk to the meeting process from a thread, never from the UI.
+
+        Both of these are blocking socket reads. On the Tk thread they froze
+        the pill for as long as they took, and the timeout that kept the
+        freeze short -- 0.4 s -- was also short enough to miss the answer
+        whenever transcription was busy, which is exactly when there is
+        something to report.
+        """
+        try:
+            answer = meeting_says("::state", timeout=2.0)
+            if answer is None:
+                ui_events.put(("meeting", None))
+                return
+            try:
+                state = json.loads(answer)
+            except ValueError:
+                state = {}
+            payload = {"state": state}
+            if state.get("version", -1) != known_version:
+                whole = meeting_says("::dump", timeout=4.0)
+                try:
+                    payload["dump"] = json.loads(whole) if whole else {}
+                except ValueError:
+                    payload["dump"] = {}
+            ui_events.put(("meeting", payload))
+        finally:
+            listen["asking"] = False
+
+    def meeting_answered(payload):
+        """What ask_meeting found, applied on the UI thread."""
+        if payload is None:
             listen["recording"] = False
             listen["status"] = "not running"
             listen["lines"] = []
             listen["version"] = -1
             render_listen()
         else:
-            try:
-                state = json.loads(answer)
-            except ValueError:
-                state = {}
+            state = payload["state"]
+            was_recording = listen["recording"]
             listen["recording"] = bool(state.get("recording"))
             listen["status"] = state.get("status") or ""
             listen["levels"] = state.get("levels") or {}
-            if state.get("version", -1) != listen["version"]:
-                whole = meeting_says("::dump", timeout=1.5)
-                try:
-                    dumped = json.loads(whole) if whole else {}
-                except ValueError:
-                    dumped = {}
-                listen["lines"] = dumped.get("lines", [])
-                listen["notes"] = dumped.get("notes", [])
+            if "dump" in payload:
+                listen["lines"] = payload["dump"].get("lines", [])
+                listen["notes"] = payload["dump"].get("notes", [])
                 listen["version"] = state.get("version", -1)
                 render_listen()
+            elif listen["recording"] != was_recording:
+                # The placeholder says whether it is recording, so it goes
+                # stale the moment that changes -- and it changes before there
+                # is any transcript to change with it, which is precisely when
+                # somebody is looking at it to see whether the button worked.
+                render_listen()
         render_listen_controls()
-        listen["job"] = root.after(500, poll_meeting)
 
     def render_listen_controls():
         # The one control most people want is the brightest, the same rule
@@ -1357,7 +1411,7 @@ def main():
         """Bring the transcription process up, headless -- this pill is its
         window. It is never started at login and never by opening the pill:
         something that can hear both sides of a call waits to be asked."""
-        if meeting_says("::state", timeout=0.4) is not None:
+        if meeting_listening():
             return True
         import subprocess
 
@@ -1824,6 +1878,8 @@ def main():
                     on_load_failed(value)
                 elif kind == "command":
                     run_command(*value)
+                elif kind == "meeting":
+                    meeting_answered(value)
                 elif kind == "selectmode":
                     flash(
                         "🖱  Select mode on — new selections are read aloud"

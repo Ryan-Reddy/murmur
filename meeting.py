@@ -326,22 +326,49 @@ class Session:
     def _model_state(self, text):
         self.bubbler.post(lambda: self.bubbler.set_status(text))
 
+    # Host APIs, best first. WASAPI is the low-latency route on anything since
+    # Vista and the right default for capture; MME is the 1991 one and is here
+    # only so a machine that offers nothing else still gets an entry.
+    API_ORDER = ("Windows WASAPI", "Windows WDM-KS", "Windows DirectSound", "MME")
+
     def devices(self) -> dict:
-        """What can be captured, for the picker in the window."""
+        """What can be captured, one entry per physical device.
+
+        PortAudio lists every input once per host API, so a single microphone
+        appears four times under four identical names. Offering all of them
+        asks somebody to choose between things that look the same and are not,
+        so only the best route to each device is offered.
+        """
         import sounddevice as sd
 
         import capture as cap
 
-        mics = [(f"{i}  {d['name']}", i)
-                for i, d in enumerate(sd.query_devices())
-                if d["max_input_channels"] and "[Loopback]" not in d["name"]]
+        apis = sd.query_hostapis()
+        rank = {name: i for i, name in enumerate(self.API_ORDER)}
+        best = {}
+        for index, device in enumerate(sd.query_devices()):
+            if not device["max_input_channels"]:
+                continue
+            if "[Loopback]" in device["name"]:
+                continue
+            api = apis[device["hostapi"]]["name"]
+            here = rank.get(api, len(rank))
+            if device["name"] not in best or here < best[device["name"]][0]:
+                best[device["name"]] = (here, index)
+        mics = [(name, index) for name, (_, index)
+                in sorted(best.items(), key=lambda pair: pair[1][1])]
+
         far = []
         try:
             import pyaudiowpatch as pa
 
             audio = pa.PyAudio()
-            far = [(f"{d['index']}  {d['name']}", d["index"])
-                   for d in cap.loopback_candidates(audio)]
+            # The loopback list duplicates too, by the same logic: one entry
+            # per name, the first one offered.
+            seen = {}
+            for device in cap.loopback_candidates(audio):
+                seen.setdefault(device["name"], device["index"])
+            far = [(name, index) for name, index in seen.items()]
             audio.terminate()
         except Exception:
             pass
