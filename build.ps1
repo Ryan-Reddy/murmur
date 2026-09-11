@@ -80,6 +80,15 @@ foreach ($file in $modelFiles) {
     New-Item -ItemType Directory -Path (Split-Path $to -Parent) -Force | Out-Null
     Copy-Item $from $to -Force
 }
+# The tray icon is a drawing rather than something generated, so it travels as
+# a file. cufflink falls back to the flat mark if it is missing, which means a
+# build without this looks wrong rather than failing -- hence the check.
+$artDir = Join-Path $dist 'assets'
+New-Item -ItemType Directory -Path $artDir -Force | Out-Null
+$trayArt = Join-Path $root 'assets\cufflink-tray.png'
+if (-not (Test-Path $trayArt)) { throw 'assets\cufflink-tray.png is missing.' }
+Copy-Item $trayArt (Join-Path $artDir 'cufflink-tray.png') -Force
+
 # The exe bundles espeak-ng and phonemizer, both GPL-3.0, so the licence has to
 # travel with the binary.
 Copy-Item (Join-Path $root 'LICENSE') (Join-Path $dist 'LICENSE.txt') -Force

@@ -386,6 +386,25 @@ def start_text_server(speaker, control, profile_for=None):
 
 # ------------------------------------------------------------------ tray icons
 
+TRAY_ART = "cufflink-tray.png"
+
+
+def _tray_art():
+    """The illustrated mark, if it is beside us.
+
+    Cropped from assets/cufflink-hero-mic.png with the wordmark removed --
+    lettering at 16 px is noise, not a name. Windows asks for 20, 24 or 32 px
+    on a high-DPI display, and it is those sizes the drawing has to survive;
+    at 16 it is a smudge and the flat mark below reads better. Shipped beside
+    the exe the same way models/ is, so the frozen build finds it too.
+    """
+    try:
+        art = Image.open(ROOT / "assets" / TRAY_ART).convert("RGBA")
+        return art if art.width >= 64 else None
+    except Exception:
+        return None
+
+
 def make_icon_image(color) -> Image.Image:
     """The tray mark: a cufflink seen face-on, two discs and a post.
 
@@ -397,6 +416,18 @@ def make_icon_image(color) -> Image.Image:
     Drawn at 4x and downsampled: PIL does not antialias, and a 64 px shape
     drawn directly has visibly stepped edges in the tray.
     """
+    art = _tray_art()
+    if art is not None:
+        icon = art.resize((64, 64), Image.LANCZOS)
+        # State is a pip rather than a tint: tinting a drawing this detailed
+        # muddies it, and a coloured dot in the corner is legible at the size
+        # this is actually rendered at.
+        if tuple(color)[:3] != tuple(BRAND_CREAM)[:3]:
+            pip = ImageDraw.Draw(icon)
+            pip.ellipse([43, 43, 62, 62], fill=(13, 27, 47, 255))
+            pip.ellipse([46, 46, 59, 59], fill=tuple(color))
+        return icon
+
     scale, size = 4, 64
     big = size * scale
     img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
