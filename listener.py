@@ -260,6 +260,14 @@ MAX_UTTERANCE = 25.0
 # Whisper a quarter second of clatter is exactly how transcripts fill up with
 # invented sentences.
 MIN_UTTERANCE = 0.25
+# How far back to look for a better place to break a monologue than the clock.
+# Long enough to contain the breath between two sentences, short enough that
+# the piece handed over is not meaningfully shorter than the window allows.
+CUT_LOOK_BACK = 2.5
+# How much quieter than its neighbours a frame has to be before it counts as a
+# gap worth cutting at. On unbroken speech -- or a test tone -- every frame is
+# much the same, and then the clock is the honest answer.
+CUT_DIP_DB = 6.0
 
 
 @dataclass(eq=False)
@@ -313,7 +321,7 @@ class Segmenter:
             if self.silence >= SILENCE_TO_CUT:
                 return self._cut()
         if len(self.frames) * FRAME_SECONDS >= MAX_UTTERANCE:
-            return self._cut(trim=False)
+            return self._cut(trim=False, forced=True)
         return None
 
     def flush(self) -> Optional[Utterance]:
@@ -321,20 +329,68 @@ class Segmenter:
         keeps the sentence."""
         return None if self.start is None else self._cut()
 
-    def _cut(self, trim: bool = True) -> Optional[Utterance]:
+    def _join(self, frames) -> int:
+        """Where to break a monologue: the quietest frame near the end.
+
+        Whisper's window is thirty seconds and it ignores the rest, so
+        somebody who talks without pausing has to be cut. A cut is the edge of
+        its context, so one placed mid-clause loses words on both sides of the
+        join -- which makes where it goes the only interesting part. The
+        quietest moment in the last couple of seconds is usually the breath
+        between two sentences, which is where a person would have put it.
+        """
+        back = max(1, int(CUT_LOOK_BACK / FRAME_SECONDS))
+        window = frames[-back:]
+        if len(window) < 2:
+            return len(frames)
+        levels = [rms_db(f) for f in window]
+        quietest = min(levels)
+        if quietest > (sum(levels) / len(levels)) - CUT_DIP_DB:
+            return len(frames)          # nowhere better than now
+        # A little past the quietest frame, not at it: cutting on the way into
+        # a pause leaves the piece ending on the loud frame before it. A
+        # natural cut keeps HANGOVER of quiet after the words; a forced one
+        # keeps half, because speech starts again straight after.
+        keep = int((HANGOVER / 2) / FRAME_SECONDS)
+        at = int(np.argmin(levels)) + keep
+        return min(len(frames), len(frames) - len(window) + at)
+
+    def _cut(self, trim: bool = True,
+             forced: bool = False) -> Optional[Utterance]:
         frames, start, voiced = self.frames, self.start, self.voiced
-        if trim:
+        carry: list = []
+        if forced:
+            # Everything after the join belongs to what is still being said,
+            # and is carried into the next utterance rather than dropped --
+            # otherwise every forced cut silently eats a second of speech.
+            split = self._join(frames)
+            frames, carry = frames[:split], frames[split:]
+        elif trim:
             spare = int(max(0.0, self.silence - HANGOVER) / FRAME_SECONDS)
             if spare:
                 frames = frames[:-spare]
-        self.frames, self.start, self.voiced, self.silence = [], None, 0.0, 0.0
-        self.pre.clear()
 
         audio = np.concatenate(frames) if frames else np.zeros(0, np.float32)
+        end = start + len(audio) / SAMPLE_RATE
+
+        self.pre.clear()
+        self.silence = 0.0
+        if carry:
+            self.frames = list(carry)
+            self.start = end
+            # `voiced` is accumulated as frames arrive, so the carried part has
+            # to be counted again. Measured against the gate's own threshold
+            # rather than by running the gate, which would move its floor.
+            threshold = max(self.gate.noise_db + self.gate.open_over_db,
+                            self.gate.floor_db)
+            self.voiced = sum(FRAME_SECONDS for f in carry
+                              if rms_db(f) > threshold)
+        else:
+            self.frames, self.start, self.voiced = [], None, 0.0
+
         if voiced < MIN_UTTERANCE:
             return None
-        return Utterance(self.source, start, start + len(audio) / SAMPLE_RATE,
-                         voiced, audio)
+        return Utterance(self.source, start, end, voiced, audio)
 
 
 # -------------------------------------------------------------- transcript
