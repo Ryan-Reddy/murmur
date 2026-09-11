@@ -1388,6 +1388,30 @@ def main():
         except OSError:
             return False
 
+    def meetings_folder() -> Path:
+        """Where transcripts are written. Asked of the meeting process when it
+        is up, so there is one answer rather than two that can drift, and
+        worked out the same way when it is not."""
+        answer = meeting_says("::where", timeout=0.6)
+        if answer and not answer.startswith("?"):
+            return Path(answer.strip())
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home())
+        return Path(base) / "cufflink" / "meetings"
+
+    def open_meetings(*_args):
+        """Show the transcripts in Explorer.
+
+        A tool that can hear both sides of a call turns private conversation
+        into text files on a disk. Saying so is not enough; the folder has to
+        be one click away, or nobody will ever look at what is in it.
+        """
+        where = meetings_folder()
+        try:
+            where.mkdir(parents=True, exist_ok=True)
+            os.startfile(where)
+        except Exception as failed:
+            flash(f"Could not open {where}: {failed}")
+
     def meeting_says(command: str, timeout: float = 0.6):
         """Ask the meeting process something. None when it is not running."""
         try:
@@ -1668,6 +1692,8 @@ def main():
                     label=f"   {name}",
                     command=lambda s=source, i=index: meeting_says(f"::use {s} {i}"))
             menu.add_separator()
+        menu.add_separator()
+        menu.add_command(label="Open the meetings folder…", command=open_meetings)
         menu.add_command(label="Voices and settings…", command=open_settings)
         try:
             menu.tk_popup(root.winfo_pointerx(), root.winfo_pointery())
@@ -1828,6 +1854,9 @@ def main():
         pystray.MenuItem(f"Follow a meeting: {HOTKEY_MEETING}",
                          lambda icon, item: ui_events.put(("command",
                                                            ("listen", "")))),
+        pystray.MenuItem("Open the meetings folder…",
+                         lambda icon, item: ui_events.put(("command",
+                                                           ("meetings", "")))),
         pystray.MenuItem("Speed", speed_menu),
         pystray.MenuItem("Volume", volume_menu),
         pystray.MenuItem("Voice", voice_menu),
@@ -1890,6 +1919,8 @@ def main():
             open_settings()
         elif name == "listen":
             open_listening()
+        elif name == "meetings":
+            open_meetings()
         elif name == "mode":
             # Not `::read`: that already means "read the selection aloud" and
             # control() takes it before this is ever reached.

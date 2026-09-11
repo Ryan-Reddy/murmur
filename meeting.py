@@ -75,7 +75,7 @@ MEETING_PORT = 52720            # cufflink is on 52719; this is the next along
 KEY_RECORD = "ctrl+alt+l"       # L for listen
 KEY_MARK = "ctrl+alt+k"         # K for keep this, I will come back to it
 KEY_NOTE = "ctrl+alt+n"         # N for note
-HELP = ("::state  ::dump  ::devices  ::use <you|them> [n]"
+HELP = ("::where  ::state  ::dump  ::devices  ::use <you|them> [n]"
         "  ::show  ::record  ::pause  ::lines [n]  ::notes  ::marked  ::status"
         "  ::check [n]  ::uncheck [n]  ::note <text>  ::save [path]"
         "  ::stop  ::help")
@@ -602,6 +602,8 @@ class Session:
             return self.save(arg or None)
         if name in ("record", "pause"):
             return self.record(name == "record")
+        if name == "where":
+            return str(state_home() / "meetings")
         if name == "state":
             # The cheap question, safe to ask twice a second. Everything here
             # is a number already in hand; nothing is rendered or copied.

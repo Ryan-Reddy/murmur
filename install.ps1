@@ -239,9 +239,28 @@ function New-Shortcut ($linkPath, $description) {
     $link.Save()
 }
 
+# The app was Murmur until the Store took the name, and a shortcut written
+# under the old name points at a cufflink.cmd that does not exist. Anyone who
+# installed before the rename has had a dead startup shortcut ever since,
+# silently -- the app simply stopped starting at sign-in.
+$startupDir = [Environment]::GetFolderPath('Startup')
+foreach ($stale in @('Murmur.lnk')) {
+    $old = Join-Path $startupDir $stale
+    if (Test-Path $old) {
+        Remove-Item $old -Force -ErrorAction SilentlyContinue
+        Say "Removed the old $stale from Startup"
+    }
+}
+
 $desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'cufflink.lnk'
 New-Shortcut $desktop 'Read the selected text aloud'
 Good 'Desktop shortcut created'
+
+# Typing the name into Start is how most people open anything, and until now
+# that found nothing at all.
+$startMenu = Join-Path ([Environment]::GetFolderPath('Programs')) 'cufflink.lnk'
+New-Shortcut $startMenu 'Read the selected text aloud'
+Good 'Start menu entry created'
 
 $wantsAutostart = $Autostart
 if (-not $wantsAutostart -and -not $Unattended) {
@@ -249,7 +268,7 @@ if (-not $wantsAutostart -and -not $Unattended) {
     $wantsAutostart = $answer -notmatch '^\s*n'
 }
 if ($wantsAutostart) {
-    $startup = Join-Path ([Environment]::GetFolderPath('Startup')) 'cufflink.lnk'
+    $startup = Join-Path $startupDir 'cufflink.lnk'
     New-Shortcut $startup 'Read the selected text aloud'
     Good 'cufflink will start with Windows'
 } else {
@@ -258,7 +277,7 @@ if ($wantsAutostart) {
 
 # --- done ------------------------------------------------------------------
 Write-Host "`nReady." -ForegroundColor Green
-Say 'cufflink lives in the system tray (a purple speaker, green while reading).'
+Say 'cufflink lives in the system tray -- the hand, with a mint dot while it reads.'
 Say ''
 Say '  Ctrl+Alt+M       read whatever text is selected'
 Say '  Ctrl+Alt+Space   pause / resume'
