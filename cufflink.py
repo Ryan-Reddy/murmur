@@ -40,6 +40,25 @@ from mousehook import MouseButtons
 keyboard = None
 pyperclip = None
 
+# Startup timing, for when it is slow and nobody can say where. Off unless
+# CUFFLINK_TIMING is set, and then one line per landmark on stderr:
+#
+#     set CUFFLINK_TIMING=1 && venv\Scripts\python.exe cufflink.py
+#
+# Worth having permanently: startup slowness has turned out to track what else
+# the machine is doing, and that is only visible if you can measure it at the
+# moment it happens rather than reconstruct it afterwards.
+_STARTED = time.perf_counter()
+_TIMING = bool(os.environ.get("CUFFLINK_TIMING"))
+
+
+def trace(label: str) -> None:
+    if not _TIMING:
+        return
+    sys.stderr.write(f"[{time.perf_counter() - _STARTED:6.2f}s] {label}\n")
+    sys.stderr.flush()
+
+
 # ------------------------------------------------------------------ config
 
 HOTKEY_READ = "ctrl+alt+m"  # M for cufflink (avoid alt+r combos: NVIDIA overlay)
@@ -214,6 +233,8 @@ _user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
 _user32.GetWindowThreadProcessId.restype = wintypes.DWORD
 _user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
 _user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+_user32.EnumWindows.argtypes = [ctypes.c_void_p, wintypes.LPARAM]
+_WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 # Handles are pointer-sized. An undeclared restype is a C int, so on 64-bit
 # every one of these comes back with its top half cut off -- and only where the
 # loader happened to place things high, which is what made the shutdown
@@ -308,6 +329,34 @@ def raise_window(hwnd) -> bool:
     return _user32.GetForegroundWindow() == hwnd
 
 
+def window_titled(fragment: str):
+    """The visible top-level window whose title contains `fragment`.
+
+    Case-insensitive, and the longest title wins when several match: an
+    editor usually has one window per project plus assorted tool windows, and
+    the one carrying the most title is the one with a document open in it.
+    Returns (hwnd, title), or (0, "") for no match.
+    """
+    if not fragment:
+        return 0, ""
+    wanted = fragment.casefold()
+    best = (0, "")
+
+    def look(hwnd, _lparam):
+        nonlocal best
+        if not _user32.IsWindowVisible(hwnd):
+            return True
+        buffer = ctypes.create_unicode_buffer(512)
+        _user32.GetWindowTextW(hwnd, buffer, 512)
+        title = buffer.value
+        if wanted in title.casefold() and len(title) > len(best[1]):
+            best = (hwnd, title)
+        return True
+
+    _user32.EnumWindows(_WNDENUMPROC(look), 0)
+    return best
+
+
 def already_running() -> bool:
     ctypes.windll.kernel32.CreateMutexW(None, False, "cufflink-single-instance")
     return ctypes.windll.kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
@@ -348,7 +397,37 @@ def grab_selection() -> str:
 
 # ------------------------------------------------------------------ text-in
 
-def start_text_server(speaker, control, profile_for=None):
+def read_headers(text: str):
+    """Split what arrived on the port into (profile, source, body).
+
+    Leading lines beginning with "::" describe what follows:
+
+        ::as <profile>    read it in a named voice
+        ::from <words>    and this is the window it came from
+
+    Everything after them is the text to speak. A line that is not a known
+    header ends the headers, so a bare command like "::stop" is left alone
+    and a paragraph that happens to start with a colon is not eaten.
+
+    Returns the profile name (or ""), the source fragment (or ""), and what
+    is left, stripped.
+    """
+    profile = source = ""
+    while True:
+        head, newline, rest = text.partition("\n")
+        if not newline:
+            break            # a header needs something after it to apply to
+        if head.startswith("::as "):
+            profile = head[len("::as "):].strip()
+        elif head.startswith("::from "):
+            source = head[len("::from "):].strip()
+        else:
+            break
+        text = rest.strip()
+    return profile, source, text.strip()
+
+
+def start_text_server(speaker, control, profile_for=None, on_source=None):
     def serve():
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -369,17 +448,16 @@ def start_text_server(speaker, control, profile_for=None):
                     chunks.append(data)
                     total += len(data)
                 text = b"".join(chunks).decode("utf-8", "replace").strip()
-                # A first line of "::as <name>" picks a voice for what follows.
-                # Anything else beginning with :: is a command, and plain text
-                # is read in the default voice, as it always was.
-                profile = None
-                if text.startswith("::as ") and profile_for is not None:
-                    first, _, rest = text.partition("\n")
-                    profile = profile_for(first[len("::as "):].strip())
-                    text = rest.strip()
+                # Leading "::" lines say how to read what follows; read_headers
+                # has the detail. Anything else beginning with :: is a command,
+                # and plain text is read in the default voice, as it always was.
+                named, came_from, text = read_headers(text)
+                profile = profile_for(named) if (named and profile_for) else None
                 if text.startswith("::"):
                     control(text)
                 elif text:
+                    if came_from and on_source is not None:
+                        on_source(came_from)
                     speaker.speak(text, profile=profile)
 
     threading.Thread(target=serve, daemon=True).start()
@@ -517,6 +595,7 @@ IMG_PAUSED = make_icon_image((255, 190, 110, 255))    # amber, and it is not
 # ------------------------------------------------------------------ app
 
 def main():
+    trace("main")
     if already_running():
         print("cufflink is already running.")
         return
@@ -601,6 +680,17 @@ def main():
         if hwnd:
             source["hwnd"], source["title"] = hwnd, title
 
+    def source_from_name(fragment: str):
+        """Text arrived on the port saying which window it belongs to.
+
+        Runs on the server thread, so the lookup happens here and only the
+        result is handed to the UI -- EnumWindows is quick, but the pill is
+        not the place to find out otherwise.
+        """
+        hwnd, title = window_titled(fragment)
+        if hwnd:
+            ui_events.put(("source", (hwnd, title)))
+
     def go_to_source():
         if raise_window(source["hwnd"]):
             return
@@ -655,6 +745,7 @@ def main():
     mouse_hook = MouseButtons(on_mouse)
 
     # --- overlay pill: what is being read, and the controls for it --------
+    trace("tk root")
     root = tk.Tk()
     root.withdraw()
     root.overrideredirect(True)
@@ -664,6 +755,7 @@ def main():
 
     # A hairline rim: one pixel of a lighter colour around the whole thing,
     # which is what stops it reading as a hole cut in the desktop.
+    trace("widgets")
     rim = tk.Frame(root, bg=EDGE)
     rim.pack(fill="both", expand=True)
     shell = tk.Frame(rim, bg=BG)
@@ -1759,6 +1851,7 @@ def main():
         pystray.MenuItem("Stop reading", lambda icon, item: speaker.stop()),
         pystray.MenuItem("Quit", quit_app),
     )
+    trace("tray")
     icon = pystray.Icon(
         "cufflink", IMG_IDLE, f"cufflink — {HOTKEY_READ} reads your selection", menu
     )
@@ -1774,7 +1867,7 @@ def main():
             ::repeat on | off | toggle  ::read  ::close  ::help  ::source
             ::voice clean | bbc | veronica | submarine | agent  ::settings
             ::mix tape=0.6 hiss=0.2 | off      -- the ingredient sliders
-            ::as <profile> followed by a newline and the text to speak
+            ::as <profile> and/or ::from <window title>, then the text
         """
         name, _, arg = line[2:].strip().partition(" ")
         arg = arg.strip()
@@ -1909,6 +2002,9 @@ def main():
                     on_load_failed(value)
                 elif kind == "command":
                     run_command(*value)
+                elif kind == "source":
+                    source["hwnd"], source["title"] = value
+                    render_pill()
                 elif kind == "meeting":
                     meeting_answered(value)
                 elif kind == "selectmode":
@@ -1951,7 +2047,7 @@ def main():
         remember_load(seconds)
         close_splash()
         icon.title = f"cufflink — {HOTKEY_READ} reads your selection"
-        start_text_server(speaker, control, profile_for)
+        start_text_server(speaker, control, profile_for, source_from_name)
         # Bound late and through lambdas: at startup `speaker` is still the
         # stand-in, and a bound method would keep pointing at it forever.
         keyboard.add_hotkey(HOTKEY_READ, on_read)
@@ -1962,6 +2058,7 @@ def main():
         keyboard.add_hotkey(HOTKEY_SLOWER, lambda: change_speed(-1))
         keyboard.add_hotkey(HOTKEY_SOURCE, go_to_source)
         keyboard.add_hotkey(HOTKEY_MEETING, open_listening)
+        trace("voice ready")
         print(f"Ready in {seconds:.1f}s. {HOTKEY_READ} = read selection.")
         speaker.speak("cufflink is ready.")
 
@@ -1973,10 +2070,13 @@ def main():
         print(f"Model failed to load: {message}")
 
     icon.title = "cufflink — warming up…"
+    trace("tray running")
     icon.run_detached()
+    trace("voice loading")
     threading.Thread(target=load_voice, daemon=True).start()
     root.after(80, poll_events)
     tick_loading()
+    trace("mainloop")
     root.mainloop()
 
 

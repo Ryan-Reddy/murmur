@@ -73,9 +73,15 @@ def main():
             return
     project = Path(data.get("cwd") or "").name
     text = f"{project}: {message}" if project else message
+    # The project folder name is also what editors put in their window title
+    # -- "file.py - murmur - Visual Studio Code" -- so it is enough for
+    # cufflink to find the window this came from and offer a way back to it.
+    headers = f"::as {PROFILE}\n"
+    if project:
+        headers += f"::from {project}\n"
     try:
         with socket.create_connection(("127.0.0.1", CUFFLINK_PORT), timeout=1) as conn:
-            conn.sendall(f"::as {PROFILE}\n{text}".encode("utf-8"))
+            conn.sendall(f"{headers}{text}".encode("utf-8"))
         _log(event, f"sent: {text}")
     except OSError:
         _log(event, f"dropped: {text}")
