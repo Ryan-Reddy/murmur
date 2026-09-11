@@ -30,6 +30,9 @@ if (-not (Test-Path $python)) { throw "No venv yet -- run .\Install.cmd first." 
 if (-not (Test-Path (Join-Path $root 'models\kokoro-v1.0.onnx'))) {
     throw "models\ is empty -- run .\Install.cmd first."
 }
+if (-not (Test-Path (Join-Path $root 'models\whisper-base\model.bin'))) {
+    throw "models\whisper-base is missing -- run .\Install.cmd to fetch it."
+}
 
 Step '1/4  Icon and splash'
 & $python (Join-Path $root 'make_assets.py')
@@ -56,13 +59,26 @@ Step '3/4  Voice model'
 # this repo caches its own downloads, and copying it wholesale once put 1.4 GB
 # of unrelated speech-to-text weights into the package: 612 MB became 1823 MB
 # and nobody noticed until the MSIX came out at 1.6 GB.
-$modelFiles = @('kokoro-v1.0.onnx', 'voices-v1.0.bin')
+#
+# whisper-base is the listening half, and is named here for the same reason:
+# the folder beside it is where faster-whisper used to cache whatever else it
+# had been asked for.
+$modelFiles = @(
+    'kokoro-v1.0.onnx'
+    'voices-v1.0.bin'
+    'whisper-base\model.bin'
+    'whisper-base\config.json'
+    'whisper-base\tokenizer.json'
+    'whisper-base\vocabulary.txt'
+)
 $modelDir = Join-Path $dist 'models'
 New-Item -ItemType Directory -Path $modelDir -Force | Out-Null
 foreach ($file in $modelFiles) {
     $from = Join-Path $root "models\$file"
-    if (-not (Test-Path $from)) { throw "models\$file is missing." }
-    Copy-Item $from (Join-Path $modelDir $file) -Force
+    if (-not (Test-Path $from)) { throw "models\$file is missing -- run .\Install.cmd" }
+    $to = Join-Path $modelDir $file
+    New-Item -ItemType Directory -Path (Split-Path $to -Parent) -Force | Out-Null
+    Copy-Item $from $to -Force
 }
 # The exe bundles espeak-ng and phonemizer, both GPL-3.0, so the licence has to
 # travel with the binary.
