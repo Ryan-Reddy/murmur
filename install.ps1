@@ -31,11 +31,34 @@ $ErrorActionPreference = 'Stop'
 
 $REPO = 'https://github.com/Ryan-Reddy/cufflink'
 $RELEASE = 'https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0'
+$WHISPER = 'https://huggingface.co/Systran/faster-whisper-base/resolve/main'
+
+# Weights are downloaded rather than committed. model.bin alone is 145 MB and
+# GitHub refuses anything over 100 MB without LFS, and a clone should not carry
+# half a gigabyte of binaries that never change.
+#
+# `whisper-base` is the listening half: the pass with a deadline, shipped so a
+# meeting never waits on a download at the moment somebody starts talking. The
+# better model it refines with is fetched on first use and is not needed here.
 $MODELS = @(
-    @{ Name = 'kokoro-v1.0.onnx'; Bytes = 325532387
+    @{ Path = 'kokoro-v1.0.onnx'; Url = "$RELEASE/kokoro-v1.0.onnx"
+       Bytes = 325532387
        Sha  = '7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5' }
-    @{ Name = 'voices-v1.0.bin';  Bytes = 28214398
+    @{ Path = 'voices-v1.0.bin';  Url = "$RELEASE/voices-v1.0.bin"
+       Bytes = 28214398
        Sha  = 'bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d' }
+    @{ Path = 'whisper-base\model.bin'; Url = "$WHISPER/model.bin"
+       Bytes = 145217532
+       Sha  = 'd01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9' }
+    @{ Path = 'whisper-base\config.json'; Url = "$WHISPER/config.json"
+       Bytes = 2309
+       Sha  = '56a6d8110d311f19c8f0471e562832c7527f146b567275bfca59fcf7c184da9a' }
+    @{ Path = 'whisper-base\tokenizer.json'; Url = "$WHISPER/tokenizer.json"
+       Bytes = 2203239
+       Sha  = 'fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab' }
+    @{ Path = 'whisper-base\vocabulary.txt'; Url = "$WHISPER/vocabulary.txt"
+       Bytes = 459861
+       Sha  = '34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913' }
 )
 
 function Say  ($m) { Write-Host "  $m" }
@@ -167,36 +190,36 @@ foreach ($model in $MODELS) {
     $path = Join-Path $modelDir $model.Name
     if ((Test-Path $path) -and -not $ForceModels) {
         if ((Get-Item $path).Length -eq $model.Bytes) {
-            Say "$($model.Name) already here, checking it..."
+            Say "$($model.Path) already here, checking it..."
             if ((Get-FileHash $path -Algorithm SHA256).Hash.ToLower() -eq $model.Sha) {
-                Good "$($model.Name) verified"
+                Good "$($model.Path) verified"
                 continue
             }
-            Warn "$($model.Name) is corrupt, downloading again"
+            Warn "$($model.Path) is corrupt, downloading again"
         } else {
-            Warn "$($model.Name) is the wrong size, downloading again"
+            Warn "$($model.Path) is the wrong size, downloading again"
         }
     }
     $tmp = "$path.part"
-    Say "Downloading $($model.Name) ($([math]::Round($model.Bytes / 1MB)) MB)..."
+    Say "Downloading $($model.Path) ($([math]::Round($model.Bytes / 1MB)) MB)..."
     $progress = $ProgressPreference
     try {
         # Invoke-WebRequest's progress bar makes a large download several times
         # slower; the message above is enough.
         $ProgressPreference = 'SilentlyContinue'
-        Invoke-WebRequest -Uri "$RELEASE/$($model.Name)" -OutFile $tmp -UseBasicParsing
+        Invoke-WebRequest -Uri $model.Url -OutFile $tmp -UseBasicParsing
     } finally { $ProgressPreference = $progress }
 
     if ((Get-Item $tmp).Length -ne $model.Bytes) {
         Remove-Item $tmp -Force
-        throw "$($model.Name) downloaded the wrong size. Check the connection and retry."
+        throw "$($model.Path) downloaded the wrong size. Check the connection and retry."
     }
     if ((Get-FileHash $tmp -Algorithm SHA256).Hash.ToLower() -ne $model.Sha) {
         Remove-Item $tmp -Force
-        throw "$($model.Name) failed its checksum. Nothing was installed."
+        throw "$($model.Path) failed its checksum. Nothing was installed."
     }
     Move-Item $tmp $path -Force
-    Good "$($model.Name) downloaded and verified"
+    Good "$($model.Path) downloaded and verified"
 }
 
 # --- 4. Shortcuts ----------------------------------------------------------
@@ -216,9 +239,28 @@ function New-Shortcut ($linkPath, $description) {
     $link.Save()
 }
 
+# The app was Murmur until the Store took the name, and a shortcut written
+# under the old name points at a cufflink.cmd that does not exist. Anyone who
+# installed before the rename has had a dead startup shortcut ever since,
+# silently -- the app simply stopped starting at sign-in.
+$startupDir = [Environment]::GetFolderPath('Startup')
+foreach ($stale in @('Murmur.lnk')) {
+    $old = Join-Path $startupDir $stale
+    if (Test-Path $old) {
+        Remove-Item $old -Force -ErrorAction SilentlyContinue
+        Say "Removed the old $stale from Startup"
+    }
+}
+
 $desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'cufflink.lnk'
 New-Shortcut $desktop 'Read the selected text aloud'
 Good 'Desktop shortcut created'
+
+# Typing the name into Start is how most people open anything, and until now
+# that found nothing at all.
+$startMenu = Join-Path ([Environment]::GetFolderPath('Programs')) 'cufflink.lnk'
+New-Shortcut $startMenu 'Read the selected text aloud'
+Good 'Start menu entry created'
 
 $wantsAutostart = $Autostart
 if (-not $wantsAutostart -and -not $Unattended) {
@@ -226,7 +268,7 @@ if (-not $wantsAutostart -and -not $Unattended) {
     $wantsAutostart = $answer -notmatch '^\s*n'
 }
 if ($wantsAutostart) {
-    $startup = Join-Path ([Environment]::GetFolderPath('Startup')) 'cufflink.lnk'
+    $startup = Join-Path $startupDir 'cufflink.lnk'
     New-Shortcut $startup 'Read the selected text aloud'
     Good 'cufflink will start with Windows'
 } else {
@@ -235,7 +277,7 @@ if ($wantsAutostart) {
 
 # --- done ------------------------------------------------------------------
 Write-Host "`nReady." -ForegroundColor Green
-Say 'cufflink lives in the system tray (a purple speaker, green while reading).'
+Say 'cufflink lives in the system tray -- the hand, with a mint dot while it reads.'
 Say ''
 Say '  Ctrl+Alt+M       read whatever text is selected'
 Say '  Ctrl+Alt+Space   pause / resume'

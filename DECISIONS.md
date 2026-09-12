@@ -234,3 +234,191 @@ OV, EV and Azure Artifact Signing all have to earn it from download volume that
 an app sent to a handful of people never gets. It would cost money and still
 warn. Unblocking the zip before extracting removes the mark-of-the-web from
 everything inside it, which is free and works today.
+
+## Who said it comes from which stream it arrived on
+
+Speaker attribution normally means diarisation: cluster the voices in one
+mixed recording and hope the clusters are people. It needs another model, the
+good ones are gated behind a HuggingFace licence click, and it is wrong often
+enough that a transcript has to be read with suspicion.
+
+A meeting on this machine already arrives on two separate streams. **The
+microphone is you; whatever the speakers are playing is everyone else.** Two
+captures, two labels, no model, and an attribution that cannot be wrong. The
+price is that everybody at the far end is one voice called "them", and that
+is a price worth paying — the split people actually want from their own
+minutes is what I said against what I was told.
+
+Each source gets its own noise floor for the same reason a shared one fails:
+a headset and a conference call arrive twenty decibels apart.
+
+## The listener is MIT, and it is bigger than the voice
+
+Whisper's weights are MIT, `faster-whisper` and CTranslate2 are MIT, and none
+of it needs an account or a key. Nothing in the licence table moves.
+
+Sizes are the real cost, read from the HuggingFace API rather than
+remembered. Kokoro, for comparison, is 338 MB:
+
+| model | `model.bin` | |
+|---|---:|---|
+| tiny | 75 MB | sloppy on names and technical words |
+| base | 145 MB | still loses them |
+| **small** | **484 MB** | the default; the usual sweet spot for dictation |
+| medium | 1.53 GB | better on accents, heavy for a tray app |
+| large-v3 | 3.09 GB | ten times the voice, on disk and in RAM |
+
+int8 roughly halves each of those, which is why it is the default compute
+type. Whether Dutch survives `small` is untested and worth testing before the
+default is trusted.
+
+## The segmenter decides the accuracy, not the model size
+
+Whisper sees one utterance at a time, so where the cuts fall *is* the edge of
+its context — a cut mid-clause loses the words on both sides of the join,
+which costs more than dropping from small to base ever would. Hence: 0.3 s of
+run-up kept from before the gate opened (the first consonant is already past
+by the time energy proves it), 0.4 s of tail, and a cut only after 0.7 s of
+silence, since a breath is 0.2–0.3 s and a clause gap around 0.5.
+
+The first thing real audio caught: the gate calibrated its noise floor on
+the *last* frame of its warm-up rather than the quietest one.
+`samples/bf_emma.wav` starts talking 30 ms in, so calibration landed on the
+word "Hey", set the floor at -21 dB, and the gate then chattered through a
+sentence sitting at -13 to -27 — open for 2 frames in the first second. It
+still produced a transcript, because the 0.7 s silence tolerance bridged the
+chatter into one utterance; it just quietly lost the first word. Taking the
+quietest frame instead took **2.6% WER to 0.0%** on that file. The warm-up is
+also held to no longer than the run-up buffer, so nothing said while the room
+is still being learned is lost.
+
+Scored against the thirteen `samples/*.wav`, whose words are known from
+`audition.py`, `tiny` gets **0.4% WER at RTF 0.18** — which says the pipeline
+is right, and nothing at all about the model choice. That is clean synthetic
+speech with no room, no crosstalk and no accent; it is the easiest audio that
+will ever go through this.
+
+Two known-bad seams, both marked in the source. Cutting a monologue at 25
+seconds lands wherever the clock says rather than at a pause; Whisper's window
+is 30 s and ignores the rest, so it has to be cut somewhere, but the quietest
+frame in the last second would be a better somewhere. And the gate is energy
+against a learned floor, which cannot tell a voice from a keyboard — the
+upgrade is the Silero VAD `faster-whisper` already ships, and onnxruntime is
+in the venv for Kokoro already, so it costs no new dependency.
+
+## Verbatim means every sentence, not every sound
+
+Whisper is a transcriber, not a stenographer: it punctuates, it tidies, and
+"um" and "you know" mostly do not survive it. What is achievable is every
+sentence, in order, attributed and timestamped, with nothing summarised away —
+so `condition_on_previous_text` is off (carrying context is what makes it
+repeat itself forever after one bad segment, and lets it correct what it heard
+into what it expected), no `initial_prompt`, and temperature 0.
+
+The one thing it invents is on near-silence, where it emits whatever its
+training data put after silence: subtitle credits. `Ondertiteling door de
+Amara.org gemeenschap` is the most common wrong line in an unattended Dutch
+transcript. Those lines are **marked, not deleted** — "thank you" is also a
+thing people say, and a filter that is sometimes wrong must not be the thing
+that silently removes a real sentence.
+
+## Capturing the far end is still open
+
+PortAudio 19.7 as shipped with `sounddevice` 0.5.6 exposes no WASAPI loopback
+flag, so system audio has to come from somewhere else: `Stereo Mix` under
+WDM-KS where the driver offers it (this machine does), or `pyaudiowpatch` /
+`soundcard` where it does not. Not chosen yet, and `listener.capture` is
+deliberately four lines holding no decisions so that choosing later changes
+nothing else.
+
+## The meeting tracker starts stopped
+
+It hears the far end by capturing the output device, which means it hears
+everything the speakers play -- a call, a video, a voice message from your
+mother. An early build began capturing the moment it launched, and while I was
+debugging something else it quietly transcribed several minutes of a personal
+voice note that happened to be playing. Nothing about that was subtle or
+recoverable-by-design; it was simply wrong.
+
+So: it opens holding nothing, recording nothing, and says **not recording** on
+its own face. Starting is a deliberate act -- the dot, Ctrl+Alt+R, or
+`::record` -- and pausing *closes the devices* rather than dropping frames,
+the same reasoning as the mouse hook: while paused it is not in the machine's
+audio path at all, which is a fact about the process rather than a promise
+about its code.
+
+Transcripts are written to `%LOCALAPPDATA%\Murmur\meetings`, never into the
+working tree, and never over a file that already exists. The filename was
+minute-resolution to begin with; two sessions closing in the same minute wrote
+the same name and the second replaced the first. Losing a transcript is not
+recoverable, so the name now carries seconds and collides into a new file
+rather than over the old one.
+
+## Level meters, because the failure is invisible in the output
+
+A transcript that says `them` for an hour looks identical whether the far end
+did all the talking or your microphone was never in the room. Tested on a real
+call, everything came out as `them` and there was no way to tell which of
+those it was -- the device we open is the *default* input, which is not always
+the one the call is using.
+
+So each source carries a live level, and the window shows two meters. A silent
+`you` meter while you are talking is the whole diagnosis, visible in a second,
+and `--mic <index>` (from `meeting.py --devices`) is the fix.
+
+## A loopback endpoint is silent until something plays
+
+The first rule for choosing between identically-named loopback devices was
+"keep the one that delivers frames", since the dead twin delivers none, ever.
+That rule is right only while audio is playing. Measured on an idle machine,
+**neither** endpoint delivers a callback -- including the one that had worked
+minutes earlier. Which is to say the probe fails exactly when it is asked, at
+the start of a meeting.
+
+The order is now: what `PyAudioWPatch` itself says the default output's
+loopback is; then a name match against the WASAPI default output; then the
+delivery probe as a tiebreak, which is decisive when something happens to be
+playing. When nothing separates them it picks the first rather than refusing,
+because a wrong endpoint shows up on the meters in seconds and no endpoint at
+all shows up as an hour of silence.
+
+## Every line is heard twice, because real time was the wrong target
+
+Measured on this machine, three samples, threads set as above:
+
+| model | RTF | headroom against live speech |
+|---|---:|---|
+| tiny | 0.13 | plenty |
+| base | 0.25 | plenty |
+| small | 0.69 – 1.0 | none worth having |
+| small, threads left to CTranslate2 | 1.23 | **loses ground every minute** |
+
+The model that keeps up is not the accurate one, and the accurate one cannot
+keep up. Picking either is a bad trade: `base` live means reading a worse
+transcript all meeting, and `small` live means the words arrive later and
+later until they land in a heap, which is what a real call actually did.
+
+So both. `base` puts words on screen while somebody is still talking, and
+`small` walks along a few seconds behind rewriting each line properly. The
+fast pass is the one with a deadline; the second has none, because the words
+are already up and are only improving. A refinement that agrees with the fast
+pass redraws nothing -- a line that flickers and settles on what it already
+said is worse than one that never moved.
+
+That makes **identity** the whole problem, not speed. A line you marked, or
+hung a note on, is rewritten underneath you seconds later, and everything you
+did to it has to survive. Marks and notes are therefore held against a line's
+`id` rather than its words, and `Minutes.add` moves them across when a better
+hearing replaces a line. Getting that wrong would not raise: it would silently
+drop the only work anybody does during a meeting.
+
+The first version of the refining pass transcribed each utterance **twice** --
+once to compare against what was already shown, once inside the code that
+emitted the new line. It doubled the cost of the expensive model, which is the
+one thing this design exists to spend carefully. Caught by a test rather than
+by a meeting, because the canned transcriber in the tests runs out of answers
+on the second call and the transcript went blank.
+
+Turned off with `--refine-with ""`, which also stops the audio being held for
+a second pass -- an utterance is up to 25 s of 16 kHz float32, about 1.6 MB,
+which is fine for the handful in the queue and not for a meeting's worth.

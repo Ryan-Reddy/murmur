@@ -40,6 +40,25 @@ from mousehook import MouseButtons
 keyboard = None
 pyperclip = None
 
+# Startup timing, for when it is slow and nobody can say where. Off unless
+# CUFFLINK_TIMING is set, and then one line per landmark on stderr:
+#
+#     set CUFFLINK_TIMING=1 && venv\Scripts\python.exe cufflink.py
+#
+# Worth having permanently: startup slowness has turned out to track what else
+# the machine is doing, and that is only visible if you can measure it at the
+# moment it happens rather than reconstruct it afterwards.
+_STARTED = time.perf_counter()
+_TIMING = bool(os.environ.get("CUFFLINK_TIMING"))
+
+
+def trace(label: str) -> None:
+    if not _TIMING:
+        return
+    sys.stderr.write(f"[{time.perf_counter() - _STARTED:6.2f}s] {label}\n")
+    sys.stderr.flush()
+
+
 # ------------------------------------------------------------------ config
 
 HOTKEY_READ = "ctrl+alt+m"  # M for cufflink (avoid alt+r combos: NVIDIA overlay)
@@ -49,6 +68,15 @@ HOTKEY_SELECTMODE = "ctrl+alt+b"  # B for browse: read every new selection
 HOTKEY_FASTER = "ctrl+alt+up"
 HOTKEY_SLOWER = "ctrl+alt+down"
 HOTKEY_SOURCE = "ctrl+alt+g"  # G for go back, to wherever the text came from
+HOTKEY_MEETING = "ctrl+alt+t"  # T for tracker: open the meeting window
+
+# The meeting tracker is a separate program on a port of its own, started on
+# demand and never at startup. Two reasons, both load-bearing: it drags in
+# ctranslate2 and half a gigabyte of Whisper, which has no business on the
+# path that has to put a window up in seven seconds; and a thing that can hear
+# both sides of a call should not be running because the tray happens to be.
+MEETING_PORT = 52720
+MEETING_SCRIPT = "meeting.py"
 
 # The voice: 70% bf_emma (British, clear) + 30% af_nicole (breathy rasp).
 BLEND = (("bf_emma", 0.7), ("af_nicole", 0.3))
@@ -80,6 +108,7 @@ TINT = "#463a68"        # the current word sits on this, not on solid accent
 NOW = "#fff4e6"         # and is warm white, which reads as lit rather than
 GREEN = "#74d3a4"       # inverted
 AMBER = "#f0b273"
+LIVE = "#e06c75"        # recording: the one colour nothing else here uses
 
 # The brand, sampled from assets/cufflink-hero.png so the drawn pieces and the
 # illustration are the same colours rather than nearly the same.
@@ -204,6 +233,8 @@ _user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
 _user32.GetWindowThreadProcessId.restype = wintypes.DWORD
 _user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
 _user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+_user32.EnumWindows.argtypes = [ctypes.c_void_p, wintypes.LPARAM]
+_WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 # Handles are pointer-sized. An undeclared restype is a C int, so on 64-bit
 # every one of these comes back with its top half cut off -- and only where the
 # loader happened to place things high, which is what made the shutdown
@@ -298,6 +329,34 @@ def raise_window(hwnd) -> bool:
     return _user32.GetForegroundWindow() == hwnd
 
 
+def window_titled(fragment: str):
+    """The visible top-level window whose title contains `fragment`.
+
+    Case-insensitive, and the longest title wins when several match: an
+    editor usually has one window per project plus assorted tool windows, and
+    the one carrying the most title is the one with a document open in it.
+    Returns (hwnd, title), or (0, "") for no match.
+    """
+    if not fragment:
+        return 0, ""
+    wanted = fragment.casefold()
+    best = (0, "")
+
+    def look(hwnd, _lparam):
+        nonlocal best
+        if not _user32.IsWindowVisible(hwnd):
+            return True
+        buffer = ctypes.create_unicode_buffer(512)
+        _user32.GetWindowTextW(hwnd, buffer, 512)
+        title = buffer.value
+        if wanted in title.casefold() and len(title) > len(best[1]):
+            best = (hwnd, title)
+        return True
+
+    _user32.EnumWindows(_WNDENUMPROC(look), 0)
+    return best
+
+
 def already_running() -> bool:
     ctypes.windll.kernel32.CreateMutexW(None, False, "cufflink-single-instance")
     return ctypes.windll.kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
@@ -338,7 +397,37 @@ def grab_selection() -> str:
 
 # ------------------------------------------------------------------ text-in
 
-def start_text_server(speaker, control, profile_for=None):
+def read_headers(text: str):
+    """Split what arrived on the port into (profile, source, body).
+
+    Leading lines beginning with "::" describe what follows:
+
+        ::as <profile>    read it in a named voice
+        ::from <words>    and this is the window it came from
+
+    Everything after them is the text to speak. A line that is not a known
+    header ends the headers, so a bare command like "::stop" is left alone
+    and a paragraph that happens to start with a colon is not eaten.
+
+    Returns the profile name (or ""), the source fragment (or ""), and what
+    is left, stripped.
+    """
+    profile = source = ""
+    while True:
+        head, newline, rest = text.partition("\n")
+        if not newline:
+            break            # a header needs something after it to apply to
+        if head.startswith("::as "):
+            profile = head[len("::as "):].strip()
+        elif head.startswith("::from "):
+            source = head[len("::from "):].strip()
+        else:
+            break
+        text = rest.strip()
+    return profile, source, text.strip()
+
+
+def start_text_server(speaker, control, profile_for=None, on_source=None):
     def serve():
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -359,22 +448,40 @@ def start_text_server(speaker, control, profile_for=None):
                     chunks.append(data)
                     total += len(data)
                 text = b"".join(chunks).decode("utf-8", "replace").strip()
-                # A first line of "::as <name>" picks a voice for what follows.
-                # Anything else beginning with :: is a command, and plain text
-                # is read in the default voice, as it always was.
-                profile = None
-                if text.startswith("::as ") and profile_for is not None:
-                    first, _, rest = text.partition("\n")
-                    profile = profile_for(first[len("::as "):].strip())
-                    text = rest.strip()
+                # Leading "::" lines say how to read what follows; read_headers
+                # has the detail. Anything else beginning with :: is a command,
+                # and plain text is read in the default voice, as it always was.
+                named, came_from, text = read_headers(text)
+                profile = profile_for(named) if (named and profile_for) else None
                 if text.startswith("::"):
                     control(text)
                 elif text:
+                    if came_from and on_source is not None:
+                        on_source(came_from)
                     speaker.speak(text, profile=profile)
 
     threading.Thread(target=serve, daemon=True).start()
 
 # ------------------------------------------------------------------ tray icons
+
+TRAY_ART = "cufflink-tray.png"
+
+
+def _tray_art():
+    """The illustrated mark, if it is beside us.
+
+    Cropped from assets/cufflink-hero-mic.png with the wordmark removed --
+    lettering at 16 px is noise, not a name. Windows asks for 20, 24 or 32 px
+    on a high-DPI display, and it is those sizes the drawing has to survive;
+    at 16 it is a smudge and the flat mark below reads better. Shipped beside
+    the exe the same way models/ is, so the frozen build finds it too.
+    """
+    try:
+        art = Image.open(ROOT / "assets" / TRAY_ART).convert("RGBA")
+        return art if art.width >= 64 else None
+    except Exception:
+        return None
+
 
 def make_icon_image(color) -> Image.Image:
     """The tray mark: a cufflink seen face-on, two discs and a post.
@@ -387,6 +494,18 @@ def make_icon_image(color) -> Image.Image:
     Drawn at 4x and downsampled: PIL does not antialias, and a 64 px shape
     drawn directly has visibly stepped edges in the tray.
     """
+    art = _tray_art()
+    if art is not None:
+        icon = art.resize((64, 64), Image.LANCZOS)
+        # State is a pip rather than a tint: tinting a drawing this detailed
+        # muddies it, and a coloured dot in the corner is legible at the size
+        # this is actually rendered at.
+        if tuple(color)[:3] != tuple(BRAND_CREAM)[:3]:
+            pip = ImageDraw.Draw(icon)
+            pip.ellipse([43, 43, 62, 62], fill=(13, 27, 47, 255))
+            pip.ellipse([46, 46, 59, 59], fill=tuple(color))
+        return icon
+
     scale, size = 4, 64
     big = size * scale
     img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
@@ -476,6 +595,7 @@ IMG_PAUSED = make_icon_image((255, 190, 110, 255))    # amber, and it is not
 # ------------------------------------------------------------------ app
 
 def main():
+    trace("main")
     if already_running():
         print("cufflink is already running.")
         return
@@ -560,6 +680,17 @@ def main():
         if hwnd:
             source["hwnd"], source["title"] = hwnd, title
 
+    def source_from_name(fragment: str):
+        """Text arrived on the port saying which window it belongs to.
+
+        Runs on the server thread, so the lookup happens here and only the
+        result is handed to the UI -- EnumWindows is quick, but the pill is
+        not the place to find out otherwise.
+        """
+        hwnd, title = window_titled(fragment)
+        if hwnd:
+            ui_events.put(("source", (hwnd, title)))
+
     def go_to_source():
         if raise_window(source["hwnd"]):
             return
@@ -614,6 +745,7 @@ def main():
     mouse_hook = MouseButtons(on_mouse)
 
     # --- overlay pill: what is being read, and the controls for it --------
+    trace("tk root")
     root = tk.Tk()
     root.withdraw()
     root.overrideredirect(True)
@@ -623,6 +755,7 @@ def main():
 
     # A hairline rim: one pixel of a lighter colour around the whole thing,
     # which is what stops it reading as a hole cut in the desktop.
+    trace("widgets")
     rim = tk.Frame(root, bg=EDGE)
     rim.pack(fill="both", expand=True)
     shell = tk.Frame(rim, bg=BG)
@@ -714,6 +847,10 @@ def main():
 
     def clear_hint():
         if hint["restore"] is None:
+            return
+        if pill["mode"] == "listen":
+            hint["restore"] = None
+            render_listen()
             return
         set_reader(hint["restore"])
         hint["restore"] = None
@@ -816,15 +953,106 @@ def main():
                      tip="Stop and put this away",
                      font=("Segoe UI", 10, "bold"), pad=7)
     close_btn.pack(side="right")
+    # The other control row. Built now, packed only in listen mode -- one
+    # window, two jobs, rather than a second window nobody can find.
+    listen_controls = tk.Frame(shell, bg=BG)
+    listen_left = tk.Frame(listen_controls, bg=BG)
+    listen_left.pack(side="left")
+    record_btn = chip(listen_left, "●", lambda: toggle_record(),
+                      tip="Start or stop recording this meeting  "
+                          "(ctrl+alt+l).  It starts stopped: this hears your "
+                          "microphone and everything your speakers play.",
+                      font=("Segoe UI", 17), pad=10)
+    record_btn.pack(side="left")
+    # Drawn on a canvas rather than typed as block characters. The same
+    # lesson the play control taught: U+2581 and friends render as a flat
+    # underscore in Segoe UI at this size, so five of them at rest read as a
+    # blank line and the meter looked broken rather than quiet.
+    level_meters = {}
+    for _source in ("you", "them"):
+        holder = tk.Frame(listen_left, bg=BG)
+        holder.pack(side="left", padx=(6, 0))
+        tk.Label(holder, text=_source, bg=BG,
+                 fg=ACCENT if _source == "you" else GREEN,
+                 font=("Segoe UI", 8)).pack(side="left")
+        canvas = tk.Canvas(holder, width=34, height=14, bg=BG,
+                           highlightthickness=0, takefocus=0)
+        canvas.pack(side="left", padx=(3, 0))
+        level_meters[_source] = canvas
+        explain(canvas,
+                "What each side is being heard at. A flat 'you' while you are "
+                "talking means the wrong microphone -- the ⚙ picks another.")
+        explain(holder, "")
+
+    def draw_meter(canvas, lit, colour):
+        """Five bars, the same idiom as the volume control: round-capped
+        lines, muted until there is something to show."""
+        canvas.delete("all")
+        for i in range(5):
+            height = 3 + i * 2
+            on = lit is not None and i < lit
+            canvas.create_line(
+                3 + i * 6, 12, 3 + i * 6, 12 - height,
+                fill=colour if on else CONTROL_OFF,
+                width=3, capstyle="round")
+    mark_btn = chip(listen_left, "[!]", lambda: mark_latest(),
+                    tip="Mark what was just said, to come back to later  "
+                        "(ctrl+alt+k)", font=("Segoe UI", 10))
+    mark_btn.pack(side="left")
+
+    # Packed to the right *before* the note box claims the middle, and given
+    # a width, so a long model message cannot push it off the pill.
+    listen_status = tk.Label(listen_controls, text="", bg=BG, fg=MUTED,
+                             font=("Segoe UI", 8), padx=6, width=16,
+                             anchor="e")
+    listen_status.pack(side="right")
+    tk.Label(listen_controls, text="note", bg=BG, fg=MUTED,
+             font=("Segoe UI", 8)).pack(side="left", padx=(10, 0))
+    note_entry = tk.Entry(listen_controls, bg=EDGE, fg=NOW,
+                          font=("Segoe UI", 10), relief="flat",
+                          insertbackground=NOW, highlightthickness=1,
+                          highlightbackground=EDGE, highlightcolor=ACCENT)
+    note_entry.pack(side="left", fill="x", expand=True, padx=(6, 8))
+    note_entry.bind("<Return>", lambda e: send_note())
+
     pins = icon_font(11)
     pin_btn = chip(chrome, "" if pins else "◉", lambda: toggle_pin(),
                    tip="Keep this on screen instead of letting it hide",
                    font=pins or ("Segoe UI", 11), pad=7)
     pin_btn.pack(side="right")
 
+    # Window chrome goes where window chrome goes. These two belong to the
+    # pill rather than to either of its jobs, and living in the read-mode
+    # control row meant they vanished at exactly the moment they were wanted:
+    # the ⚙ that picks a different microphone was unreachable from listen
+    # mode, which is the only mode that has microphones.
+    devices_btn = chip(chrome, "≡", lambda: device_menu(),
+                       tip="Which microphone, which output, and the voice "
+                           "settings. In both modes, because the moment you "
+                           "need it is the moment somebody is already talking.")
+    devices_btn.pack(side="right")
+    mode_btn = chip(chrome, "listen", lambda: toggle_mode(),
+                    font=("Segoe UI", 9),
+                    tip="Switch the pill between reading text aloud and "
+                        "following a meeting  (ctrl+alt+t)")
+    mode_btn.config(width=6)
+    mode_btn.pack(side="right")
+
     pill = {"sentence": "", "paused": False, "speaking": False,
             "words": [], "volume": 1.0, "pinned": False, "muted": 0.0,
-            "pos": None, "dismissed": False, "helping": False, "at": 0}
+            "pos": None, "dismissed": False, "helping": False, "at": 0,
+            "mode": "read"}
+
+    # What the pill knows about the meeting process. `version` is the last
+    # thing it drew; the poll is a short line that says whether that number
+    # has moved, so nothing but the number crosses the wire while nobody is
+    # talking -- and none of it crosses at all outside listen mode.
+    listen = {"version": -1, "recording": False, "status": "",
+              "levels": {}, "lines": [], "notes": [], "job": None,
+              # True while a background ask is out. Without it a slow answer
+              # would let the next tick start a second one, and a stalled
+              # meeting process would collect a thread every 500 ms.
+              "asking": False}
 
     # --- volume -----------------------------------------------------------
     def render_volume():
@@ -877,6 +1105,13 @@ def main():
     render_volume()
 
     # --- read-along -------------------------------------------------------
+    reader.tag_configure("dim", foreground=MUTED)
+    reader.tag_configure("said", foreground=FG)
+    reader.tag_configure("marked", foreground=AMBER)
+    reader.tag_configure("note", foreground=NOW)
+    reader.tag_configure("you", foreground=ACCENT)
+    reader.tag_configure("them", foreground=GREEN)
+
     def show_sentence(text: str):
         reader.config(state="normal")
         reader.delete("1.0", "end")
@@ -1117,7 +1352,16 @@ def main():
         hide_timer["id"] = root.after(delay, done)
 
     def flash(message: str):
-        """Show a setting change while nothing is being read."""
+        """Show a setting change while nothing is being read.
+
+        In listen mode the transcript owns the text area, and a message that
+        replaces it has to put it back rather than leaving the pill showing a
+        volume change where the meeting was.
+        """
+        if pill["mode"] == "listen":
+            render_pill()
+            hide_later()
+            return
         if not pill["speaking"]:
             reader.config(state="normal")
             reader.delete("1.0", "end")
@@ -1126,6 +1370,335 @@ def main():
             pill["words"] = []
         render_pill()
         hide_later()
+
+    # --- listen mode: the same pill, doing the other job -------------------
+
+    def meeting_listening(timeout: float = 0.35) -> bool:
+        """Is anything holding the meeting port?
+
+        A connect and an immediate close. It does not wait for the process to
+        answer, which matters because the thing that answers is the thread
+        doing the transcribing -- ask it while it is busy and a running
+        process looks like a dead one.
+        """
+        try:
+            with socket.create_connection(("127.0.0.1", MEETING_PORT),
+                                          timeout=timeout):
+                return True
+        except OSError:
+            return False
+
+    def meetings_folder() -> Path:
+        """Where transcripts are written. Asked of the meeting process when it
+        is up, so there is one answer rather than two that can drift, and
+        worked out the same way when it is not."""
+        answer = meeting_says("::where", timeout=0.6)
+        if answer and not answer.startswith("?"):
+            return Path(answer.strip())
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home())
+        return Path(base) / "cufflink" / "meetings"
+
+    def open_meetings(*_args):
+        """Show the transcripts in Explorer.
+
+        A tool that can hear both sides of a call turns private conversation
+        into text files on a disk. Saying so is not enough; the folder has to
+        be one click away, or nobody will ever look at what is in it.
+        """
+        where = meetings_folder()
+        try:
+            where.mkdir(parents=True, exist_ok=True)
+            os.startfile(where)
+        except Exception as failed:
+            flash(f"Could not open {where}: {failed}")
+
+    def meeting_says(command: str, timeout: float = 0.6):
+        """Ask the meeting process something. None when it is not running."""
+        try:
+            with socket.create_connection(("127.0.0.1", MEETING_PORT),
+                                          timeout=timeout) as conn:
+                conn.sendall(command.encode("utf-8"))
+                conn.shutdown(socket.SHUT_WR)
+                parts = []
+                while True:
+                    block = conn.recv(65536)
+                    if not block:
+                        return b"".join(parts).decode("utf-8", "replace")
+                    parts.append(block)
+        except OSError:
+            return None
+
+    def render_listen():
+        """Draw the transcript into the reader, in place of the reading."""
+        reader.config(state="normal")
+        reader.delete("1.0", "end")
+        notes_for = {}
+        for note in listen["notes"]:
+            notes_for.setdefault(note.get("about"), []).append(note)
+        loose = [n for n in listen["notes"] if n.get("about") is None]
+        if not listen["lines"] and not loose:
+            reader.insert("end",
+                          "listening…\n" if listen["recording"]
+                          else "not recording — press ● to start\n", "dim")
+        # A note written before anybody has spoken is attached to nothing, and
+        # would otherwise never be drawn at all -- typed, accepted, invisible.
+        for note in loose:
+            at = int(note.get("at") or 0)
+            reader.insert("end", f"{at // 60:02d}:{at % 60:02d} ", "dim")
+            reader.insert("end", f"note: {note['text']}\n", "note")
+        for line in listen["lines"]:
+            stamp = int(line.get("at") or 0)
+            reader.insert("end", f"{stamp // 60:02d}:{stamp % 60:02d} ", "dim")
+            reader.insert("end", line.get("source", "?"),
+                          "you" if line.get("source") == "you" else "them")
+            if line.get("checked"):
+                reader.insert("end", "  [!]", "marked")
+            reader.insert("end", "\n")
+            reader.insert("end", (line.get("text") or "") + "\n",
+                          "marked" if line.get("checked") else "said")
+            for note in notes_for.get(line.get("id"), []):
+                reader.insert("end", f"    note: {note['text']}\n", "note")
+        reader.config(state="disabled")
+        reader.see("end")
+        pill["words"] = []
+
+    def poll_meeting():
+        """Only ever scheduled while listen mode is on.
+
+        Two things stop it opening a socket for nothing. Leaving listen mode
+        returns here without rescheduling, and `set_mode` cancels whatever was
+        pending. And while the pill is hidden -- which it does on its own
+        after a while -- there is nobody to draw for, so it keeps its timer
+        but asks nothing, at a fifth of the rate. On a laptop that is the
+        difference between a background app and a background app you notice.
+        """
+        listen["job"] = None
+        if pill["mode"] != "listen":
+            return
+        # Slower when nobody can see it: the timer stays, the asking mostly
+        # stops. On a laptop that is the difference between a background app
+        # and a background app you notice.
+        every = 500 if root.winfo_ismapped() else 2500
+        if not listen["asking"]:
+            listen["asking"] = True
+            threading.Thread(target=ask_meeting, args=(listen["version"],),
+                             daemon=True).start()
+        listen["job"] = root.after(every, poll_meeting)
+
+    def ask_meeting(known_version: int):
+        """Talk to the meeting process from a thread, never from the UI.
+
+        Both of these are blocking socket reads. On the Tk thread they froze
+        the pill for as long as they took, and the timeout that kept the
+        freeze short -- 0.4 s -- was also short enough to miss the answer
+        whenever transcription was busy, which is exactly when there is
+        something to report.
+        """
+        try:
+            answer = meeting_says("::state", timeout=2.0)
+            if answer is None:
+                ui_events.put(("meeting", None))
+                return
+            try:
+                state = json.loads(answer)
+            except ValueError:
+                state = {}
+            payload = {"state": state}
+            if state.get("version", -1) != known_version:
+                whole = meeting_says("::dump", timeout=4.0)
+                try:
+                    payload["dump"] = json.loads(whole) if whole else {}
+                except ValueError:
+                    payload["dump"] = {}
+            ui_events.put(("meeting", payload))
+        finally:
+            listen["asking"] = False
+
+    def meeting_answered(payload):
+        """What ask_meeting found, applied on the UI thread."""
+        if payload is None:
+            listen["recording"] = False
+            listen["status"] = "not running"
+            listen["lines"] = []
+            listen["version"] = -1
+            render_listen()
+        else:
+            state = payload["state"]
+            was_recording = listen["recording"]
+            listen["recording"] = bool(state.get("recording"))
+            listen["status"] = state.get("status") or ""
+            listen["levels"] = state.get("levels") or {}
+            if "dump" in payload:
+                listen["lines"] = payload["dump"].get("lines", [])
+                listen["notes"] = payload["dump"].get("notes", [])
+                listen["version"] = state.get("version", -1)
+                render_listen()
+            elif listen["recording"] != was_recording:
+                # The placeholder says whether it is recording, so it goes
+                # stale the moment that changes -- and it changes before there
+                # is any transcript to change with it, which is precisely when
+                # somebody is looking at it to see whether the button worked.
+                render_listen()
+        render_listen_controls()
+
+    def render_listen_controls():
+        # The one control most people want is the brightest, the same rule
+        # the play button follows on the other row.
+        record_btn.rest = LIVE if listen["recording"] else CONTROL_HOT
+        record_btn.config(text="●", fg=record_btn.rest)
+        for source, canvas in level_meters.items():
+            draw_meter(canvas, (listen["levels"] or {}).get(source),
+                       ACCENT if source == "you" else GREEN)
+        # Clipped rather than allowed to squeeze the note box off the pill;
+        # the whole message is in the tooltip and the log either way.
+        whole = listen["status"] or ""
+        listen_status.config(text=whole[:22] + ("…" if len(whole) > 22 else ""))
+
+    def start_meeting():
+        """Bring the transcription process up, headless -- this pill is its
+        window. It is never started at login and never by opening the pill:
+        something that can hear both sides of a call waits to be asked."""
+        if meeting_listening():
+            return True
+        import subprocess
+
+        here = Path(__file__).resolve().parent
+        script = here / MEETING_SCRIPT
+        if not script.exists():
+            listen["status"] = "meeting.py is missing"
+            return False
+        runner = here / "venv" / "Scripts" / "pythonw.exe"
+        if not runner.exists():
+            runner = Path(sys.executable).with_name("pythonw.exe")
+        log = settings_home().with_name("meeting.log")
+        try:
+            log.parent.mkdir(parents=True, exist_ok=True)
+            with open(log, "a", encoding="utf-8") as out:
+                subprocess.Popen(
+                    [str(runner), str(script), "--headless"], cwd=str(here),
+                    stdout=out, stderr=out,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            listen["status"] = "starting…"
+            return True
+        except Exception as failed:
+            listen["status"] = f"{failed}"
+            return False
+
+    def set_mode(mode: str):
+        """Swap what the pill is for. The reader and the window stay; only the
+        control row and what fills the text area change, because two windows
+        for two halves of one job is what this replaced.
+
+        Whatever happens in here, the pill ends with a control row on it. A
+        half-applied switch leaves a window with no way to do anything and no
+        way to say why, which is worse than either mode.
+        """
+        if mode == pill["mode"]:
+            return
+        pill["mode"] = mode
+        if mode == "listen":
+            controls.pack_forget()
+            # The hairline is "where you are in what is being read", which
+            # means nothing here; it was drawing a violet rule across the
+            # middle of a transcript.
+            progress.pack_forget()
+            # Enough to read a exchange without the pill becoming a wall of
+            # empty ground while nobody has said anything yet.
+            reader.config(height=7)
+            listen_controls.pack(fill="x", padx=14, pady=(2, 8))
+            mode_btn.config(text="read")
+            speaker.stop()
+            start_meeting()
+            # Draw the transcript now rather than whenever it next changes.
+            # Without this the pill kept showing whatever the reader last
+            # held -- a spoken message, a setting flash -- for as long as
+            # nobody said anything.
+            listen["version"] = -1
+            render_listen()
+            if listen["job"] is None:
+                poll_meeting()
+        else:
+            if listen["job"] is not None:
+                root.after_cancel(listen["job"])
+                listen["job"] = None
+            listen_controls.pack_forget()
+            reader.config(height=3)
+            # Packed in order rather than with `before=controls`. `controls`
+            # is not managed at this point -- it was forgotten on the way into
+            # listen mode -- and pack refuses a reference widget it is not
+            # managing. That raised here, half way through the switch, leaving
+            # neither control row packed: a pill with nothing on it but the
+            # pin and the close.
+            progress.pack(fill="x", padx=20, pady=(0, 0))
+            controls.pack(fill="x", padx=14, pady=(2, 8))
+            mode_btn.config(text="listen")
+            show_sentence(pill["sentence"])
+        if not controls.winfo_ismapped() and not listen_controls.winfo_ismapped():
+            (listen_controls if mode == "listen" else controls).pack(
+                fill="x", padx=14, pady=(2, 8))
+        render_pill()
+        place_pill()
+        touched()
+
+    def toggle_mode():
+        set_mode("read" if pill["mode"] == "listen" else "listen")
+
+    def open_listening(*_args):
+        """The hotkey: put the pill up, in listen mode, wherever you are."""
+        pill["dismissed"] = False
+        set_mode("listen")
+        place_pill()          # what actually deiconifies and fades it in
+        cancel_hide()
+
+    def toggle_record():
+        if not listen["recording"] and not start_meeting():
+            return
+        meeting_says("::record" if not listen["recording"] else "::pause")
+        listen["recording"] = not listen["recording"]
+        render_listen_controls()
+        touched()
+
+    def mark_latest():
+        if meeting_says("::check") is not None:
+            listen["version"] = -1        # force a redraw on the next poll
+        touched()
+
+    def send_note(_event=None):
+        text = note_entry.get().strip()
+        if text and meeting_says(f"::note {text}") is not None:
+            note_entry.delete(0, "end")
+            listen["version"] = -1
+        touched()
+
+    def device_menu():
+        """Which microphone, and which output is being listened to. In reach
+        during the call: the moment you find out you picked the wrong one is
+        the moment somebody is already talking."""
+        answer = meeting_says("::devices", timeout=1.5)
+        menu = tk.Menu(root, tearoff=0, bg=BG, fg=FG,
+                       activebackground=TINT, activeforeground=NOW,
+                       bd=0, font=("Segoe UI", 9))
+        try:
+            lists = json.loads(answer) if answer else {}
+        except ValueError:
+            lists = {}
+        if not lists:
+            menu.add_command(label="start listening first", state="disabled")
+        for source, label in (("you", "microphone — you"),
+                              ("them", "output — everyone else")):
+            menu.add_command(label=label, state="disabled")
+            for name, index in lists.get(source, []):
+                menu.add_command(
+                    label=f"   {name}",
+                    command=lambda s=source, i=index: meeting_says(f"::use {s} {i}"))
+            menu.add_separator()
+        menu.add_separator()
+        menu.add_command(label="Open the meetings folder…", command=open_meetings)
+        menu.add_command(label="Voices and settings…", command=open_settings)
+        try:
+            menu.tk_popup(root.winfo_pointerx(), root.winfo_pointery())
+        finally:
+            menu.grab_release()
 
     # Windows activates a window when it is clicked, which would pull focus out
     # of whatever the user is reading from. WS_EX_NOACTIVATE stops that, so the
@@ -1237,10 +1810,53 @@ def main():
             for name, label in characters.catalogue()
         ]
     )
+    def open_meeting(_icon=None, _item=None):
+        """Open the meeting tracker, or raise it if it is already up.
+
+        Asking the port first is what makes this idempotent: clicking the tray
+        item twice should not leave two windows fighting over one microphone.
+        The child gets its own console-free process and a log file, because a
+        program started from a tray menu fails invisibly otherwise -- the same
+        reason claude_notify.py keeps one.
+        """
+        import subprocess
+
+        try:
+            with socket.create_connection(("127.0.0.1", MEETING_PORT),
+                                          timeout=0.6) as conn:
+                conn.sendall(b"::show")
+                return
+        except OSError:
+            pass
+
+        here = Path(__file__).resolve().parent
+        script = here / MEETING_SCRIPT
+        if not script.exists():
+            return
+        runner = here / "venv" / "Scripts" / "pythonw.exe"
+        if not runner.exists():
+            runner = Path(sys.executable).with_name("pythonw.exe")
+        log = settings_home().with_name("meeting.log")
+        try:
+            log.parent.mkdir(parents=True, exist_ok=True)
+            with open(log, "a", encoding="utf-8") as out:
+                subprocess.Popen([str(runner), str(script)], cwd=str(here),
+                                 stdout=out, stderr=out,
+                                 creationflags=getattr(subprocess,
+                                                       "CREATE_NO_WINDOW", 0))
+        except Exception as failed:
+            print(f"meeting: {failed}")
+
     menu = pystray.Menu(
         pystray.MenuItem(f"Read selection: {HOTKEY_READ}", None, enabled=False),
         pystray.MenuItem(f"Pause: {HOTKEY_PAUSE} or click the pill", None, enabled=False),
         pystray.MenuItem(f"Stop: {HOTKEY_STOP} or the pill's ✕", None, enabled=False),
+        pystray.MenuItem(f"Follow a meeting: {HOTKEY_MEETING}",
+                         lambda icon, item: ui_events.put(("command",
+                                                           ("listen", "")))),
+        pystray.MenuItem("Open the meetings folder…",
+                         lambda icon, item: ui_events.put(("command",
+                                                           ("meetings", "")))),
         pystray.MenuItem("Speed", speed_menu),
         pystray.MenuItem("Volume", volume_menu),
         pystray.MenuItem("Voice", voice_menu),
@@ -1264,6 +1880,7 @@ def main():
         pystray.MenuItem("Stop reading", lambda icon, item: speaker.stop()),
         pystray.MenuItem("Quit", quit_app),
     )
+    trace("tray")
     icon = pystray.Icon(
         "cufflink", IMG_IDLE, f"cufflink — {HOTKEY_READ} reads your selection", menu
     )
@@ -1279,7 +1896,7 @@ def main():
             ::repeat on | off | toggle  ::read  ::close  ::help  ::source
             ::voice clean | bbc | veronica | submarine | agent  ::settings
             ::mix tape=0.6 hiss=0.2 | off      -- the ingredient sliders
-            ::as <profile> followed by a newline and the text to speak
+            ::as <profile> and/or ::from <window title>, then the text
         """
         name, _, arg = line[2:].strip().partition(" ")
         arg = arg.strip()
@@ -1300,6 +1917,14 @@ def main():
             go_to_source()
         elif name == "settings":
             open_settings()
+        elif name == "listen":
+            open_listening()
+        elif name == "meetings":
+            open_meetings()
+        elif name == "mode":
+            # Not `::read`: that already means "read the selection aloud" and
+            # control() takes it before this is ever reached.
+            set_mode("listen" if arg == "listen" else "read")
         elif name == "voice":
             import voices
 
@@ -1370,6 +1995,11 @@ def main():
                         hide_later(LINGER_AFTER_SPEECH)
                     render_pill()
                 elif kind == "text":
+                    # Reading something aloud is an explicit act, so it wins:
+                    # the pill comes back from listening rather than having
+                    # the transcript quietly overwritten by a sentence.
+                    if pill["mode"] == "listen":
+                        set_mode("read")
                     pill["sentence"] = value
                     show_sentence(value)
                     render_pill()
@@ -1403,6 +2033,11 @@ def main():
                     on_load_failed(value)
                 elif kind == "command":
                     run_command(*value)
+                elif kind == "source":
+                    source["hwnd"], source["title"] = value
+                    render_pill()
+                elif kind == "meeting":
+                    meeting_answered(value)
                 elif kind == "selectmode":
                     flash(
                         "🖱  Select mode on — new selections are read aloud"
@@ -1443,7 +2078,7 @@ def main():
         remember_load(seconds)
         close_splash()
         icon.title = f"cufflink — {HOTKEY_READ} reads your selection"
-        start_text_server(speaker, control, profile_for)
+        start_text_server(speaker, control, profile_for, source_from_name)
         # Bound late and through lambdas: at startup `speaker` is still the
         # stand-in, and a bound method would keep pointing at it forever.
         keyboard.add_hotkey(HOTKEY_READ, on_read)
@@ -1453,6 +2088,8 @@ def main():
         keyboard.add_hotkey(HOTKEY_FASTER, lambda: change_speed(+1))
         keyboard.add_hotkey(HOTKEY_SLOWER, lambda: change_speed(-1))
         keyboard.add_hotkey(HOTKEY_SOURCE, go_to_source)
+        keyboard.add_hotkey(HOTKEY_MEETING, open_listening)
+        trace("voice ready")
         print(f"Ready in {seconds:.1f}s. {HOTKEY_READ} = read selection.")
         speaker.speak("cufflink is ready.")
 
@@ -1464,10 +2101,13 @@ def main():
         print(f"Model failed to load: {message}")
 
     icon.title = "cufflink — warming up…"
+    trace("tray running")
     icon.run_detached()
+    trace("voice loading")
     threading.Thread(target=load_voice, daemon=True).start()
     root.after(80, poll_events)
     tick_loading()
+    trace("mainloop")
     root.mainloop()
 
 
