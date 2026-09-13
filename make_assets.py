@@ -2,18 +2,19 @@
 
     venv\\Scripts\\python.exe make_assets.py
 
-Two marks, not one. The illustrated hero -- the engraved hand coming out of a
-cuff, with the wordmark under it -- is the thing people see on the Store page,
-and it is lovely at 128 px and up. Below that it is mud: at 16 px the hand
-averages to a grey smudge and "cufflink" is an illegible smear. Measured, not
-assumed.
+The icon is the illustrated hero at every size -- the engraved hand coming
+out of a cuff, the mic on the cuff button, the wordmark under it -- cropped to
+its tile from `cufflink-hero-mic.png`. At 16 px it is a smudge; measured, not
+assumed. That was the case for a separate small mark, and the mark is still
+drawn here for anything that wants it. But the icon is what the app looks
+like everywhere else, and the decision was that one face beats a crisp one
+that nobody recognises. A hand-made .ico was placed to say so, and this
+generator used to overwrite it on every build without a word -- so now the
+generator produces the same thing, and the source of truth is a file it
+reads rather than one it clobbers.
 
-So the small sizes get their own mark: two discs and a post, which is a
-cufflink seen face-on, and which survives 16 px because it is two circles.
-It echoes the cuff button in the hero rather than competing with it.
-
-    <= 71 px   the mark      tray, taskbar, Start list, small tile
-    >= 150 px  the hero      large tiles, Store logo, splash
+    every size   the hero tile   .ico, taskbar, Start, Store tiles
+    mark()       two discs       kept for cufflink-mark.png
 
 Both are generated here, so a palette change is one command rather than a
 morning in an image editor.
@@ -25,6 +26,10 @@ from PIL import Image, ImageDraw, ImageFont
 
 ASSETS = Path(__file__).parent / "assets"
 HERO = ASSETS / "cufflink-hero.png"
+# The icon's source: the version with the microphone on the cuff button, so
+# the exe icon says what the app now does. It is the same image the tray art
+# was cut from.
+HERO_MIC = ASSETS / "cufflink-hero-mic.png"
 
 # Sampled from the artwork rather than eyeballed, so the generated pieces and
 # the illustration are actually the same colours.
@@ -63,9 +68,36 @@ def hero(size: int) -> Image.Image:
     return art.resize((size, size), Image.LANCZOS)
 
 
+def tile(size: int) -> Image.Image:
+    """The hero, cropped to its rounded tile and squared, at any size.
+
+    The illustration sits on a slightly different navy from the tile it is
+    drawn on; the tile is found by where the pixels stop matching the corner,
+    rather than by numbers that would go stale the day the art is re-exported.
+    """
+    art = Image.open(HERO_MIC).convert("RGBA")
+    px = art.convert("RGB").load()
+    corner = px[2, 2]
+    w, h = art.size
+
+    def differs(x, y):
+        r, g, b = px[x, y]
+        return abs(r - corner[0]) + abs(g - corner[1]) + abs(b - corner[2]) > 18
+
+    xs = [x for x in range(w) if any(differs(x, y) for y in range(0, h, 8))]
+    ys = [y for y in range(h) if any(differs(x, y) for x in range(0, w, 8))]
+    box = (min(xs), min(ys), max(xs) + 1, max(ys) + 1)
+    cropped = art.crop(box)
+    side = max(cropped.size)
+    square = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+    square.paste(cropped, ((side - cropped.width) // 2,
+                           (side - cropped.height) // 2), cropped)
+    return square.resize((size, size), Image.LANCZOS)
+
+
 def icon(size: int) -> Image.Image:
-    """Whichever mark survives at this size."""
-    return mark(size) if size <= 71 else hero(size).convert("RGBA")
+    """The icon, at any size: the hero tile."""
+    return tile(size)
 
 
 def _font(size, bold=True):
@@ -163,7 +195,7 @@ WIDE_SCALES = [(310, 150, 100), (388, 188, 125), (465, 225, 150), (620, 300, 200
 
 # The .ico carries both marks: the shell picks by size, so the tray gets the
 # legible one and anything large gets the illustration.
-ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
+ICO_SIZES = [16, 24, 32, 48, 64, 72, 96, 128, 256]
 
 
 def store_assets(into: Path) -> int:
@@ -189,8 +221,9 @@ def store_assets(into: Path) -> int:
 
 
 if __name__ == "__main__":
-    if not HERO.exists():
-        raise SystemExit(f"{HERO} is missing -- the illustration is the source.")
+    for source in (HERO, HERO_MIC):
+        if not source.exists():
+            raise SystemExit(f"{source} is missing -- the illustration is the source.")
     ASSETS.mkdir(exist_ok=True)
 
     icon(256).save(ASSETS / "cufflink.ico",
